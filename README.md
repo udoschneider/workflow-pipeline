@@ -20,6 +20,14 @@ The indexes are **generated and gitignored** — never hand-edited. To change a 
 
 The ignore rules ship as `project/workflow/.gitignore`, written on first run if absent and never overwritten. They live there rather than in your root `.gitignore` so that nothing has to merge into a file you own, and so that the rules are committed once and inherited by everyone who clones — rather than each person wiring them at install time and one person forgetting.
 
+## What isn't included
+
+Everything listed above works as installed. There is nothing you have to supply to start using the pipeline.
+
+One piece is deliberately left to you. The spec says that when an item is finished, someone should confirm its `## Acceptance criteria` are genuinely met before filing it under `completed/`. Nothing here enforces that, because enforcing it means running your tests and reading your build — and a package that guessed at those would be wrong for most projects. If you want that confirmation enforced rather than remembered, write it as a skill or a script of your own, and note what it is in `project/workflow/README.local.md`.
+
+The same applies to anything that wraps your commit or quality gate. Moving an item between stages is a plain file move; you can do every one of them by hand.
+
 ## Install
 
 Three paths, all public and anonymous — no account, no key.
@@ -93,12 +101,6 @@ git-hooks/install-git-hooks.sh /path/to/your/repo
 ```
 
 Copies rather than setting `core.hooksPath` — that setting is repo-global and would silently disable any hook manager you already use. An existing foreign hook is reported and left alone, never overwritten. Git hooks are per-clone and not version-controlled, so everyone cloning runs this themselves.
-
-## What it expects you to supply
-
-The spec describes obligations at **close-out** — walking each acceptance criterion before an item may move to `completed/`, and recording an intervention level per closure. It does not say what performs them, because that is a tool that wraps your quality gate and your instrumentation, and shipping ours would be shipping an opinion about your gate.
-
-So: no close-out skill and no commit skill ship here. Every stage move in the spec can be performed by hand, and the close-out obligations are stated as rules you can satisfy however you like. If you want them enforced rather than remembered, that is the one piece you write yourself.
 
 ## Repository layout
 
