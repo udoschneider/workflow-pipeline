@@ -17,7 +17,8 @@
         "triage",
         "planning",
         "project-management"
-      ]
+      ],
+      "license": "MIT"
     }
   ]
 }

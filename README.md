@@ -123,6 +123,10 @@ root/                    Copied 1:1 into the consuming repository root
 
 `root/` serves both delivery paths: OpenPackage copies it to the workspace root, and the plugin's init command copies the same tree. One source, two channels.
 
+## License
+
+MIT — see [LICENSE](LICENSE). Use it, fork it, ship it in commercial work; keep the copyright notice.
+
 ## Status
 
 **0.1.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.
