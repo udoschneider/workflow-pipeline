@@ -5,7 +5,8 @@
 #
 #   ./install.sh /path/to/target-repo                  apply
 #   ./install.sh --dry-run /path/to/target             show what would change
-#   ./install.sh --skills-dir .opencode/skills /path   non-Claude agent
+#   ./install.sh --skills-dir .opencode/skills \
+#                --commands-dir .opencode/commands /path   non-Claude agent
 #   ./install.sh --wire-agents /path                   also append the pipeline
 #                                                      section to AGENTS.md
 #   ./install.sh --agents-file CLAUDE.md /path         wire into CLAUDE.md instead
@@ -26,6 +27,7 @@ PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=0
 TARGET=""
 SKILLS_DIR=".claude/skills"
+COMMANDS_DIR=".claude/commands"
 WIRE_AGENTS=0
 AGENTS_TARGET="AGENTS.md"
 
@@ -33,6 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --skills-dir) shift; SKILLS_DIR="${1:?--skills-dir needs a value}" ;;
+    --commands-dir) shift; COMMANDS_DIR="${1:?--commands-dir needs a value}" ;;
     --wire-agents) WIRE_AGENTS=1 ;;
     --agents-file) shift; AGENTS_TARGET="${1:?--agents-file needs a value}" ;;
     -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -60,6 +63,7 @@ echo "workflow-pipeline $(grep '^version:' "$PKG/openpackage.yml" | awk '{print 
 echo "  from: $PKG"
 echo "  into: $TARGET"
 echo "  skills → $SKILLS_DIR"
+echo "  commands → $COMMANDS_DIR"
 [ "$DRY_RUN" -eq 1 ] && echo "  mode: dry run (nothing will be written)"
 echo
 
@@ -104,6 +108,20 @@ sync_file "$PKG/root/project/workflow/README.md" "project/workflow/README.md"
 for skill in "$PKG"/skills/*/; do
   name="$(basename "$skill")"
   sync_file "$skill/SKILL.md" "$SKILLS_DIR/$name/SKILL.md"
+done
+
+# Commands are not a duplicate of the skills -- they are how a skill is reachable
+# at all on an agent that resolves /name from a commands directory rather than
+# from skills. Installing skills without them delivers six procedures nobody can
+# invoke, which is the exact failure the command files were added to fix.
+#
+# workflow-pipeline-init is excluded on purpose: it is the plugin's bootstrap and
+# reads ${CLAUDE_PLUGIN_ROOT}, which does not exist on this path. Installing it
+# would add a command that fails the moment it runs.
+for cmd in "$PKG"/commands/*.md; do
+  name="$(basename "$cmd")"
+  [ "$name" = "workflow-pipeline-init.md" ] && continue
+  sync_file "$cmd" "$COMMANDS_DIR/$name"
 done
 
 seed_file "$PKG/root/project/workflow/.gitignore" "project/workflow/.gitignore"

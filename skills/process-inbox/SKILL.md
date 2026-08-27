@@ -77,7 +77,7 @@ depends_on: [slug_a, slug_b]                      # only if applicable; bare slu
 ---
 ```
 
-Required fields per stage: `thoughts/` needs `type` only; `backlog/` needs `type` and `priority`. See `project/workflow/README.md` § "Frontmatter schema" for the full spec.
+Required fields per stage: `thoughts/` needs `type` **and `summary`**; `backlog/` needs `type` and `priority`. `summary` is not optional — `bin/workflow-index --check` fails on a thought without one, because it is the row text of `_MAP.md` and the one thing the generator cannot derive. See `project/workflow/README.md` § "Frontmatter schema" for the full spec.
 
 ## File structure — destinations
 
@@ -86,6 +86,9 @@ Required fields per stage: `thoughts/` needs `type` only; `backlog/` needs `type
 ```markdown
 ---
 type: code
+summary: |
+  Two or three lines of navigation summary. This becomes the thought's row in
+  _MAP.md, and the generator rejects a thought that lacks it.
 ---
 
 # Title
@@ -142,12 +145,16 @@ Date in the filename is the **origin date** (today) — see `project/workflow/RE
 
 ## Indexes regenerate themselves
 
-`_MAP.md` / `_DEPS.md` are generated + gitignored — never hand-edit them. They rebuild from frontmatter via `bin/workflow-index` — or whatever `project/workflow/README.local.md` names in its place — fired automatically by your agent's post-write hooks where those are wired, and again by your pre-commit step. Your only obligation is the **source**: every new thought must carry a `summary:` frontmatter field (the `_MAP.md` row), and `depends_on:` / `refinement_state:` drive the `_DEPS` tables. No manual, batched index regeneration step.
+`_MAP.md` / `_DEPS.md` are generated + gitignored — never hand-edit them. They rebuild from frontmatter via `bin/workflow-index`, or whatever `project/workflow/README.local.md` names in its place.
+
+**Run it yourself before reading an index, and again after promoting anything.** Agent hooks and pre-commit steps may also fire it, but they are an optimisation and are absent entirely on some install paths — so a skill that reads an index without regenerating is reading whatever happened to be on disk. That is worse than a missing index, because a stale table is complete and well-formed and reads as current.
+
+Your only obligation beyond that is the **source**: every new thought must carry a `summary:` frontmatter field (the `_MAP.md` row), and `depends_on:` / `refinement_state:` drive the `_DEPS` tables.
 
 ## Workflow
 
 1. **List inbox files** — read `project/workflow/inbox/*.md` (excluding `.gitkeep`). If empty, report "Inbox is empty" and exit.
-2. **Read existing pipeline state** for verification: `project/workflow/thoughts/_MAP.md`, `project/workflow/backlog/_DEPS.md`, and `project/workflow/thoughts/_DEPS.md`. These let you cite "already tracked" cases without re-reading every file.
+2. **Regenerate, then read existing pipeline state** for verification — run `bin/workflow-index` first, then read `project/workflow/thoughts/_MAP.md`, `project/workflow/backlog/_DEPS.md`, and `project/workflow/thoughts/_DEPS.md`. These let you cite "already tracked" cases without re-reading every file.
 3. **For each inbox file** (oldest first by filename): a. Read the file. b. Verify against codebase and existing workflow items (grep / read). c. Present the item with proposed action and reasoning. d. If `thought` or `backlog`, offer the re-spar round per § "Re-spar offer." e. Wait for user approval on the disposition (and re-spar outcome if relevant). f. Execute the approved action — write destination file, `rm` inbox source, append to scrap.md, etc.
 4. **Batch index regeneration** (if any promotions happened).
 5. **Summary** — show actions taken: N discarded, N shrunk-to-scrap, N promoted-to-thought, N promoted-to-backlog, N kept, N already-tracked, N done.

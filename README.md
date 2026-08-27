@@ -54,8 +54,11 @@ Installs the skills into whichever agent platforms are detected, and copies `roo
 
 ```sh
 git clone https://github.com/udoschneider/workflow-pipeline /tmp/wfp
-/tmp/wfp/install.sh /path/to/your/repo                                 # Claude Code
-/tmp/wfp/install.sh --skills-dir .opencode/skills /path/to/your/repo   # OpenCode
+/tmp/wfp/install.sh /path/to/your/repo   # Claude Code
+
+# OpenCode, or any agent that resolves /name from a commands directory:
+/tmp/wfp/install.sh --skills-dir .opencode/skills \
+                    --commands-dir .opencode/commands /path/to/your/repo
 ```
 
 Needs neither a package manager nor a coding agent. It is also the only path that enforces, per file and on every run, which files you own — re-running never overwrites your `lessons.md` or `scrap.md`. Add `--dry-run` to see what it would change first.

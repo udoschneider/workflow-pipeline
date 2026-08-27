@@ -124,19 +124,37 @@ done
 [ "$failures" -eq "$before" ] && pass "every path the docs name is one the scaffold creates"
 
 before=$failures
-# The installer enumerates what it copies, so a file added to root/ does not
-# reach a consumer until install.sh is told about it. OpenPackage and the
-# plugin's init command both take root/ wholesale and would not notice the
-# difference -- meaning the same package installs differently depending on the
-# path taken, which is the worst kind of inconsistency to debug.
-for file in $(cd "$PKG/root" && find . -type f | sed 's|^\./||'); do
-  case "$file" in
-    project/workflow/*/.gitkeep) continue ;;  # covered by the stage loop
-    .claude/skills/*) continue ;;             # covered by the skills loop
+# Run the installer and check what actually lands, rather than grepping its
+# source for filenames.
+#
+# The textual version of this check missed a whole directory. It asserted two
+# things -- every skill has a command file, and install.sh copies everything in
+# root/ -- and commands/ is in neither set, so six slash commands shipped in the
+# package and reached no consumer on this path. Both rules were green. The gap
+# was between them.
+#
+# A behavioural check has no between. Everything the package intends to deliver
+# is listed once, and the installer either puts it somewhere or it does not.
+D="$(mktemp -d)"
+git -C "$D" init -q
+"$PKG/install.sh" --skills-dir .agent/skills --commands-dir .agent/commands "$D" >/dev/null 2>&1
+
+# Delivered by other mechanisms, each for a stated reason -- not by install.sh.
+#   workflow-pipeline-init.md  plugin bootstrap; reads CLAUDE_PLUGIN_ROOT
+#   hooks/                     agent hooks, declared in hooks.json, not copied
+#   git-hooks/                 has its own installer
+#   .claude-plugin/            plugin manifests, read in place
+#   AGENTS.md                  wired via --wire-agents, not placed as a file
+for f in $(cd "$PKG" && find root skills commands -type f | sed 's|^\./||'); do
+  case "$f" in
+    commands/workflow-pipeline-init.md) continue ;;
   esac
-  grep -q -- "$file" "$PKG/install.sh" || fail "install.sh does not copy root/$file"
+  base="$(basename "$f")"
+  found=$(find "$D" -name "$base" -type f 2>/dev/null | head -1)
+  [ -n "$found" ] || fail "install.sh delivers nothing for $f"
 done
-[ "$failures" -eq "$before" ] && pass "install.sh copies every file in the scaffold"
+rm -rf "$D"
+[ "$failures" -eq "$before" ] && pass "install.sh delivers every file the package ships"
 
 before=$failures
 # Claude Code exposes a skill as /name by itself; OpenCode reads

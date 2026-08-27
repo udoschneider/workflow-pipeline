@@ -32,6 +32,14 @@ For each scrap item, propose one of:
 
 ## Workflow
 
+**Regenerate the indexes first.** They are derived projections of per-item frontmatter, and anything written since the last regeneration is not in them yet:
+
+```sh
+bin/workflow-index
+```
+
+If `project/workflow/README.local.md` names a different command for this, use that one — it is the one the project's own gates run. Cheap and idempotent. Do not skip it on the assumption that a hook already ran — hooks are an optimisation here, not the guarantee, and they are absent entirely on some install paths.
+
 1. Read `project/scrap.md`
 2. Read `project/workflow/thoughts/_MAP.md` and `project/workflow/backlog/_DEPS.md` for existing items
 3. For each scrap item, run this loop — **one item per turn, no exceptions**: a. Verify against codebase and existing workflow items (read-only research may be done ahead for all items) b. Present **one** item with proposed action and reasoning c. **STOP — end the turn.** Wait for the user to approve *this item* d. On approval, execute the approved action for *this item only* e. Return to (b) for the next item in a new turn
