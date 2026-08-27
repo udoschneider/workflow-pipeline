@@ -1,0 +1,23 @@
+{
+  "name": "workflow-pipeline",
+  "description": "The idea-lifecycle pipeline: thoughts → backlog → active → completed, with rejected/ reachable from any stage.",
+  "owner": {
+    "name": "Udo Schneider"
+  },
+  "plugins": [
+    {
+      "name": "workflow-pipeline",
+      "description": "An idea-lifecycle pipeline for coding agents. Six triage skills (/process-scrap, /process-inbox, /what-next, /audit-thoughts, /prune-completed, /prune-lessons), hooks that keep the generated indexes fresh, and /workflow-pipeline-init to scaffold it into a repository.",
+      "source": "./",
+      "strict": false,
+      "version": "0.1.0",
+      "keywords": [
+        "workflow",
+        "backlog",
+        "triage",
+        "planning",
+        "project-management"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "workflow-pipeline",
+  "version": "0.1.0",
+  "description": "An idea-lifecycle pipeline for coding agents — thoughts → backlog → active → completed, with rejected/ reachable from any stage. Ships six triage skills, index-regeneration hooks, and an init command that scaffolds the pipeline into a repository.",
+  "author": {
+    "name": "Udo Schneider"
+  }
+}

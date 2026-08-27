@@ -1,0 +1,5 @@
+name: workflow-pipeline
+version: 0.1.0
+description: An idea-lifecycle pipeline for coding agents — thoughts → backlog → active → completed, with rejected/ reachable from any stage. Ships the spec, the directory scaffold, a stdlib-Python index generator, and six triage skills.
+dependencies: []
+dev-dependencies: []

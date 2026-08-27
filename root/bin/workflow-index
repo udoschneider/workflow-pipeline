@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""Generate the three workflow index files from per-item YAML frontmatter.
+
+The indexes are **derived projections** of the source of truth that lives in
+each item's frontmatter -- not hand-maintained documents. This script rebuilds
+all three deterministically (no LLM step) so they can be gitignored and
+regenerated on demand, which is what keeps multi-worktree merge conflicts from
+committed, wholesale-regenerated index files off the table.
+
+Files generated:
+
+  * project/workflow/thoughts/_MAP.md -- `File | Summary`, sorted by filename.
+    The summary is each thought's `summary:` frontmatter field, the only
+    editorial, non-derivable input (see `missing_summary`).
+  * project/workflow/thoughts/_DEPS.md -- `File | Refinement | Downstream Pull |
+    Cluster | Type`, sorted by downstream-pull desc then filename. Downstream
+    pull = count of backlog/ + active/ items naming the thought in
+    `depends_on:` (direct mentions only, no transitive walk).
+  * project/workflow/backlog/_DEPS.md -- two tables. Actionable (no unmet deps)
+    and Blocked (with a "Waiting on" column). A dep is *met* when a file with
+    that slug exists in active/ or completed/.
+
+Usage:
+
+    bin/workflow-index                  generate and write all three files
+    bin/workflow-index --check          validate sources, write nothing
+    bin/workflow-index --root DIR       project subdirectory (default "project")
+    bin/workflow-index vault            resolve and print the sparring vault root
+
+`--check` validates the *committed source* (every thoughts/*.md parses and
+carries a `summary:`) rather than the generated files, which are gitignored and
+so cannot be validated in CI.
+
+Deliberately stdlib-only: no PyYAML, no package install, no virtualenv. The
+frontmatter dialect this pipeline uses is a small, closed subset of YAML --
+plain scalars, flow sequences, and block scalars -- and hand-parsing it is
+cheaper than making every consuming project carry a dependency. See
+`parse_frontmatter` for the exact subset and its limits.
+
+Exit codes: 0 success, 1 validation failure, 2 usage error.
+"""
+
+import json
+import os
+import re
+import sys
+
+DEFAULT_ROOT = "project"
+EM_DASH = "—"
+STAGES = ("thoughts", "backlog", "active", "completed")
+# Every directory the pipeline needs to exist. Wider than STAGES: nothing is
+# ever *generated* into rejected/ or inbox/, but a stage you cannot see is a
+# stage nobody files into.
+SCAFFOLD = STAGES + ("rejected", "inbox")
+# Rank orders the pipeline stages so a slug present in several dirs resolves to
+# the furthest one it has reached.
+STAGE_RANK = {"thoughts": 0, "backlog": 1, "active": 2, "completed": 3}
+INDEX_FILES = ("_MAP.md", "_DEPS.md", "_INDEX.md")
+
+KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*)$")
+DATE_PREFIX_RE = re.compile(r"^\d{8}_")
+
+# Written into project/workflow/ when absent. It belongs there rather than in
+# the repository root .gitignore: nothing has to merge into a file the user
+# owns, it is committed so everyone who clones inherits the rules, and the
+# paths are relative so they survive the tree moving.
+#
+# This has to be emitted by the generator, not merely shipped, because it is a
+# dotfile -- and packagers drop dotfiles. Shipping it alone would mean the
+# files documented as ignored were only ignored on some install paths, which is
+# worse than not claiming it at all: someone commits a local vault path or a
+# generated index on the strength of documentation that was true elsewhere.
+GITIGNORE = """\
+# Managed by the workflow pipeline. Written on first run if absent, and never
+# overwritten afterwards — edit freely.
+
+# Machine-local: holds an absolute path to your knowledge vault, which is
+# meaningless — and mildly disclosing — on anyone else's machine.
+config.json
+
+# Derived projections of per-item frontmatter, rebuilt on demand by
+# bin/workflow-index. Committing them is what produces the merge conflicts
+# this design exists to avoid: every branch regenerates the whole table, so
+# two branches touching any item conflict across the entire file.
+thoughts/_MAP.md
+thoughts/_DEPS.md
+backlog/_DEPS.md
+"""
+
+
+# --- Frontmatter parsing ------------------------------------------------
+
+
+def extract_frontmatter(content):
+    """Return the YAML block of a leading `---` fence, or None if there is none.
+
+    Mirrors the delimiter rule the pipeline has always used: the document must
+    open with `---` on its own first line, and the block ends at the next line
+    beginning with `---`. A file with an opening fence and no closing one has
+    no frontmatter at all rather than one running to EOF -- that keeps a
+    truncated edit from silently swallowing the whole document.
+    """
+    if not content.startswith("---\n"):
+        return None
+    rest = content[4:]
+    idx = rest.find("\n---")
+    if idx == -1:
+        return None
+    return rest[:idx]
+
+
+def parse_frontmatter(path):
+    """Parse a file's frontmatter into a dict of str -> str | list[str].
+
+    Handles exactly the three value forms this pipeline uses:
+
+      key: plain scalar        -> str (surrounding quotes and a trailing
+                                  ` # comment` stripped, as YAML would)
+      key: [a, b]              -> list[str] (flow sequence; `[]` -> [])
+      key: | / >  + indented   -> str (block scalar, lines joined with newlines)
+
+    Anything outside that subset -- nested mappings, block sequences, anchors,
+    multi-document streams -- is not understood, and its key is skipped rather
+    than guessed at. A missing or unreadable file yields {}, which downstream
+    surfaces as `missing_summary` for a thought instead of a crash.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            content = handle.read()
+    except OSError:
+        return {}
+
+    yaml = extract_frontmatter(content)
+    if yaml is None:
+        return {}
+
+    meta = {}
+    lines = yaml.split("\n")
+    i = 0
+    while i < len(lines):
+        match = KEY_RE.match(lines[i])
+        if not match:
+            i += 1
+            continue
+        key, raw = match.group(1), match.group(2).strip()
+        i += 1
+
+        if raw[:1] in ("|", ">"):
+            meta[key], i = _read_block(lines, i)
+        elif raw.startswith("["):
+            meta[key] = _parse_flow_list(raw)
+        else:
+            meta[key] = _scalar(raw)
+    return meta
+
+
+def _read_block(lines, i):
+    """Consume the indented body of a block scalar starting at line `i`.
+
+    Both `|` (literal) and `>` (folded) are read the same way, keeping raw line
+    breaks. That is safe here because every consumer of a block scalar in this
+    pipeline is `cell()`, which collapses all newlines to single spaces -- so
+    literal and folded converge on identical output and the distinction cannot
+    leak into a generated file.
+    """
+    body = []
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() == "":
+            body.append("")
+            i += 1
+            continue
+        if not line[:1].isspace():
+            break
+        body.append(line.strip())
+        i += 1
+    while body and body[-1] == "":
+        body.pop()
+    return "\n".join(body), i
+
+
+def _parse_flow_list(raw):
+    inner = raw[1:raw.rindex("]")] if "]" in raw else raw[1:]
+    return [item for item in (_scalar(p.strip()) for p in inner.split(",")) if item]
+
+
+def _scalar(raw):
+    raw = re.sub(r"\s+#.*$", "", raw).strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        return raw[1:-1]
+    return raw
+
+
+# --- Source loading & validation ----------------------------------------
+
+
+def stage_dir(root, stage):
+    return os.path.join(root, "workflow", stage)
+
+
+def slug_of(filename):
+    """Strip the `.md` suffix and the `YYYYMMDD_` date prefix.
+
+    The slug, not the filename, is the identity `depends_on:` uses -- so an item
+    keeps its identity across stage moves, which rewrite the date prefix.
+    """
+    name = filename[:-3] if filename.endswith(".md") else filename
+    return DATE_PREFIX_RE.sub("", name)
+
+
+def list_md(directory):
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return []
+    return [e for e in entries if e.endswith(".md") and e not in INDEX_FILES]
+
+
+def ensure_scaffold(root):
+    """Create any missing stage directory, returning the ones created.
+
+    The pipeline's directories are carried between projects as `.gitkeep`
+    files, and packagers routinely drop those: a `**/*` glob skips dotfiles
+    unless explicitly told otherwise, so a tool can copy a package faithfully
+    and silently leave every stage directory behind. Observed in the wild --
+    an install landed all six visible files and none of the six `.gitkeep`s,
+    which is indistinguishable from success until someone looks for
+    `rejected/` and it is not there.
+
+    Creating them here makes the scaffold self-healing on every install path,
+    including ones this package will never know about. It runs only on a
+    generate, never on `--check`, so a validation pass stays read-only.
+    """
+    created = []
+    for stage in SCAFFOLD:
+        path = stage_dir(root, stage)
+        if not os.path.isdir(path):
+            os.makedirs(path, exist_ok=True)
+            created.append(path)
+
+    ignore = os.path.join(root, "workflow", ".gitignore")
+    if not os.path.exists(ignore):
+        write_file(ignore, GITIGNORE)
+        created.append(ignore)
+
+    return created
+
+
+def load_sources(root):
+    sources = []
+    for stage in STAGES:
+        directory = stage_dir(root, stage)
+        for filename in list_md(directory):
+            sources.append(
+                {
+                    "file": filename,
+                    "slug": slug_of(filename),
+                    "dir": stage,
+                    "meta": parse_frontmatter(os.path.join(directory, filename)),
+                }
+            )
+    return sources
+
+
+def validate(sources):
+    """Only thoughts carry the editorial `summary:`.
+
+    A thought without one is a hard error: inventing an empty summary would
+    mask an author forgetting the single input the map cannot derive.
+    """
+    problems = []
+    for source in sources:
+        if source["dir"] != "thoughts":
+            continue
+        summary = source["meta"].get("summary")
+        if not isinstance(summary, str) or summary.strip() == "":
+            problems.append({"file": source["file"], "reason": "missing_summary"})
+    return problems
+
+
+# --- Cell rendering -----------------------------------------------------
+
+
+def field(value):
+    """A table cell from a single-line frontmatter value; em-dash for absent."""
+    return value if isinstance(value, str) and value != "" else EM_DASH
+
+
+def gates(value):
+    if isinstance(value, list) and value:
+        return ", ".join(str(v) for v in value)
+    return EM_DASH
+
+
+def cell(value):
+    """Render a summary verbatim as table-cell text, markdown escapes intact.
+
+    Newlines from a block scalar collapse to single spaces so the row stays on
+    one physical line; a markdown table cell cannot contain a line break.
+    """
+    if not isinstance(value, str):
+        return EM_DASH
+    return " ".join(part.strip() for part in value.split("\n") if part.strip() != "")
+
+
+def depends_on(source):
+    value = source["meta"].get("depends_on")
+    return [str(v) for v in value] if isinstance(value, list) else []
+
+
+# --- Index writers ------------------------------------------------------
+
+
+def write_thoughts_map(root, sources):
+    rows = "\n".join(
+        "| {} | {} |".format(s["file"], cell(s["meta"].get("summary")))
+        for s in sorted(
+            (s for s in sources if s["dir"] == "thoughts"), key=lambda s: s["file"]
+        )
+    )
+    content = (
+        "# Thought Map\n"
+        "\n"
+        "> Auto-generated summary index of all thoughts. Rebuild when thoughts"
+        " are added, modified, or removed/promoted.\n"
+        "\n"
+        "| File | Summary |\n"
+        "|------|---------|\n"
+        "{}\n".format(rows)
+    )
+    path = os.path.join(root, "workflow", "thoughts", "_MAP.md")
+    write_file(path, content)
+    return path
+
+
+def downstream_pull(sources):
+    """Direct mentions only -- no transitive walk through other thoughts.
+
+    A thought's pull is how many backlog/active items name its slug, which is a
+    measure of what is actually waiting on it. Following the graph transitively
+    would inflate an upstream thought's score with pull it does not itself hold.
+    """
+    counts = {}
+    for source in sources:
+        if source["dir"] in ("backlog", "active"):
+            for slug in depends_on(source):
+                counts[slug] = counts.get(slug, 0) + 1
+    return counts
+
+
+def write_thoughts_deps(root, sources):
+    pull = downstream_pull(sources)
+    thoughts = [s for s in sources if s["dir"] == "thoughts"]
+
+    def row(source):
+        count = pull.get(source["slug"], 0)
+        cells = [
+            source["file"],
+            field(source["meta"].get("refinement_state")),
+            str(count),
+            field(source["meta"].get("cluster")),
+            field(source["meta"].get("type")),
+        ]
+        return (-count, source["file"]), "| " + " | ".join(cells) + " |"
+
+    rows = "\n".join(
+        rendered
+        for _, rendered in sorted((row(s) for s in thoughts), key=lambda r: r[0])
+    )
+    content = (
+        "# Thoughts Dependency Index\n"
+        "\n"
+        "> Auto-generated advisory view of thoughts ranked by promotion signal."
+        " Rebuild when thoughts are added, modified, or promoted/rejected.\n"
+        "\n"
+        "Schema and rationale: see `project/workflow/README.md`"
+        ' § "Thoughts Dependency Index".\n'
+        "\n"
+        "| File | Refinement | Downstream Pull | Cluster | Type |\n"
+        "|------|------------|-----------------|---------|------|\n"
+        "{}\n".format(rows)
+    )
+    path = os.path.join(root, "workflow", "thoughts", "_DEPS.md")
+    write_file(path, content)
+    return path
+
+
+def location_index(sources):
+    """Map each slug to the furthest stage a file with that slug has reached."""
+    location = {}
+    for source in sources:
+        current = location.get(source["slug"])
+        if current is None or STAGE_RANK[source["dir"]] > STAGE_RANK[current]:
+            location[source["slug"]] = source["dir"]
+    return location
+
+
+def unmet_deps(source, location):
+    """Deps that resolve to a still-pending tracked item, with their stage.
+
+    You can only be blocked by something the pipeline can actually wait on. A
+    dep sitting in active/ or completed/ is met -- work is underway or done. A
+    dep resolving nowhere (a loose conceptual name, or a slug renamed since) is
+    treated as met too, because there is no tracked item to block on; the
+    alternative is a permanently blocked row nobody can unblock.
+    """
+    return [
+        (slug, location.get(slug, "missing"))
+        for slug in depends_on(source)
+        if location.get(slug, "missing") in ("backlog", "thoughts")
+    ]
+
+
+def backlog_row(source):
+    """The five leading cells shared by both tables.
+
+    The Blocked table appends its own "Waiting on" cell and closing pipe.
+    """
+    cells = [
+        source["file"],
+        field(source["meta"].get("priority")),
+        field(source["meta"].get("band")),
+        gates(source["meta"].get("gates")),
+        field(source["meta"].get("type")),
+    ]
+    return "| " + " | ".join(cells) + " |"
+
+
+def write_backlog_deps(root, sources):
+    location = location_index(sources)
+    items = sorted(
+        (s for s in sources if s["dir"] in ("backlog", "active")),
+        key=lambda s: s["file"],
+    )
+
+    actionable = [s for s in items if not unmet_deps(s, location)]
+    blocked = [s for s in items if unmet_deps(s, location)]
+
+    a_body = "\n".join(backlog_row(s) for s in actionable)
+    b_body = "\n".join(
+        backlog_row(s)
+        + " "
+        + ", ".join(
+            "`{}` ({})".format(slug, loc) for slug, loc in unmet_deps(s, location)
+        )
+        + " |"
+        for s in blocked
+    )
+
+    content = (
+        "# Backlog Dependency Index\n"
+        "\n"
+        "> Auto-generated advisory view of dependencies between backlog/active"
+        " items. Rebuild when items are added, modified, or promoted.\n"
+        "\n"
+        "## Actionable\n"
+        "\n"
+        "Items with no unmet dependencies — ready to pick up.\n"
+        "\n"
+        "| File | Priority | Band | Gates | Type |\n"
+        "|------|----------|------|-------|------|\n"
+        "{}\n"
+        "\n"
+        "## Blocked\n"
+        "\n"
+        "| File | Priority | Band | Gates | Type | Waiting on |\n"
+        "|------|----------|------|-------|------|------------|\n"
+        "{}\n".format(a_body, b_body)
+    )
+    path = os.path.join(root, "workflow", "backlog", "_DEPS.md")
+    write_file(path, content)
+    return path
+
+
+def write_file(path, content):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+# --- Vault resolution ---------------------------------------------------
+
+
+def resolve_vault(root):
+    """Resolve the sparring vault root, distinguishing all three failure modes.
+
+    Reading config.json directly cannot detect the third case -- a `vault_root`
+    naming a directory that no longer exists -- and that is precisely the one
+    that turns a moved vault into a permanently silent sparring step. Each
+    error carries its own fix.
+    """
+    path = os.path.join(root, "workflow", "config.json")
+    if not os.path.isfile(path):
+        return None, (
+            "No {}.\n"
+            "  Fix: cp {}.example {} and set vault_root.".format(path, path, path)
+        )
+    try:
+        with open(path, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError) as exc:
+        return None, (
+            "{} is not readable JSON ({}).\n"
+            "  Fix: repair it, or recreate it from the .example.".format(path, exc)
+        )
+
+    vault_root = (config.get("vault_root") or "").strip()
+    if not vault_root:
+        return None, (
+            "{} has no vault_root.\n"
+            "  Fix: set vault_root to your local knowledge-vault"
+            " directory.".format(path)
+        )
+    if not os.path.isdir(vault_root):
+        return None, (
+            "vault_root {} does not exist.\n"
+            "  Fix: point vault_root at the vault's current"
+            " location.".format(vault_root)
+        )
+    return vault_root, None
+
+
+# --- Entry point --------------------------------------------------------
+
+
+def main(argv):
+    args = list(argv[1:])
+    root = DEFAULT_ROOT
+    check = False
+    command = None
+
+    while args:
+        arg = args.pop(0)
+        if arg == "--check":
+            check = True
+        elif arg == "--root":
+            if not args:
+                sys.stderr.write("--root needs a value\n")
+                return 2
+            root = args.pop(0)
+        elif arg == "vault":
+            command = "vault"
+        elif arg in ("-h", "--help"):
+            sys.stdout.write(__doc__)
+            return 0
+        else:
+            sys.stderr.write("unknown argument: {}\n".format(arg))
+            return 2
+
+    if command == "vault":
+        vault_root, error = resolve_vault(root)
+        if error:
+            sys.stderr.write(error + "\n")
+            return 1
+        sys.stdout.write(vault_root + "\n")
+        return 0
+
+    sources = load_sources(root)
+    problems = validate(sources)
+    if problems:
+        for problem in problems:
+            sys.stderr.write(
+                "Workflow index: {} -- {}\n".format(problem["file"], problem["reason"])
+            )
+        return 1
+
+    if check:
+        sys.stdout.write("Workflow index: sources valid ✓\n")
+        return 0
+
+    created = ensure_scaffold(root)
+    for path in created:
+        sys.stdout.write("Workflow index: created {}\n".format(path))
+
+    for path in (
+        write_thoughts_map(root, sources),
+        write_thoughts_deps(root, sources),
+        write_backlog_deps(root, sources),
+    ):
+        sys.stdout.write("Workflow index: wrote {}\n".format(path))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

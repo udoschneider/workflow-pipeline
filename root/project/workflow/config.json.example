@@ -1,0 +1,4 @@
+{
+  "_comment": "Local paths to agent-consumed external resources for the workflow pipeline. Copy this file to config.json (gitignored) and set the values for your machine. Consumed by the agent during the sparring step — see project/workflow/README.md § 'Thought Refinement'. The <vault_root> token used throughout workflow docs resolves to vault_root below. Verify with: bin/workflow-index vault",
+  "vault_root": "/home/you/Documents/Obsidian"
+}

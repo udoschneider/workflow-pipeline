@@ -1,0 +1,37 @@
+{
+  "description": "Keep the generated workflow indexes (_MAP.md, _DEPS.md) current — they are derived projections of per-item frontmatter, so a stale one silently misreports the state of the pipeline.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/regenerate-index.sh\" --announce"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // \"\"' | grep -qE '/(thoughts/_MAP|thoughts/_DEPS|backlog/_DEPS)\\.md$' && bash \"${CLAUDE_PLUGIN_ROOT}/hooks/regenerate-index.sh\" || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // \"\"' | grep -qE '/project/workflow/(thoughts|backlog|active|completed)/' && bash \"${CLAUDE_PLUGIN_ROOT}/hooks/regenerate-index.sh\" || true"
+          }
+        ]
+      }
+    ]
+  }
+}

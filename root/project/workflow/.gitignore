@@ -1,0 +1,20 @@
+# Managed by the workflow pipeline. Written on first run if absent, and never
+# overwritten afterwards — edit freely.
+#
+# These rules live here rather than in the repository's root .gitignore for
+# three reasons: this file is owned by the pipeline, so nothing has to merge
+# into a file you own; it is committed, so everyone who clones inherits the
+# rules instead of each person wiring them at install time; and the paths are
+# relative to this directory, so they stay correct if the tree ever moves.
+
+# Machine-local: holds an absolute path to your knowledge vault, which is
+# meaningless — and mildly disclosing — on anyone else's machine.
+config.json
+
+# Derived projections of per-item frontmatter, rebuilt on demand by
+# bin/workflow-index. Committing them is what produces the merge conflicts
+# this design exists to avoid: every branch regenerates the whole table, so
+# two branches touching any item conflict across the entire file.
+thoughts/_MAP.md
+thoughts/_DEPS.md
+backlog/_DEPS.md

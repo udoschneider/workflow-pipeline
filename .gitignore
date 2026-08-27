@@ -1,0 +1,8 @@
+# Workspace metadata OpenPackage writes into a consuming project. It is never
+# part of a package payload, and this repo is a package.
+.openpackage/
+
+# Local identity denylist — the names this package must never ship. Deliberately
+# uncommitted: committing it would publish the very terms it exists to keep out.
+# See .identity-denylist.example for what belongs in it and why.
+.identity-denylist

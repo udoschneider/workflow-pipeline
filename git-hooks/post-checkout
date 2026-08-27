@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# Regenerate the workflow indexes after the working tree changes underneath you.
+#
+# Install: see install-git-hooks.sh in this directory.
+#
+# This covers the one staleness case no agent can: a branch switch, a pull, or
+# a rebase replaces the whole corpus at once, and every index is wrong the
+# instant it completes. An agent hook fires on the agent's own edits; it never
+# sees git move the tree.
+#
+# The indexes are gitignored, so they survive checkout unchanged while the
+# items they describe are swapped out. That is the worst kind of stale: a
+# complete, well-formed index describing a branch you are no longer on.
+
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+[ -d project/workflow ] || exit 0
+
+if [ -x bin/workflow-index ]; then
+  ./bin/workflow-index >/dev/null 2>&1 || true
+elif [ -f bin/workflow-index ]; then
+  python3 bin/workflow-index >/dev/null 2>&1 || true
+fi
+
+# Never fail: a hook that blocks checkout over a doc index is worse than a
+# stale index.
+exit 0

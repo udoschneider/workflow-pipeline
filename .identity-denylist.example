@@ -1,0 +1,44 @@
+# Terms that must never appear in anything this package ships.
+#
+# Copy to `.identity-denylist` (gitignored) and fill in for your situation:
+#
+#     cp .identity-denylist.example .identity-denylist
+#
+# One term per line. Blank lines and #-comments are ignored. Matching is
+# case-sensitive, so list each casing you care about separately — a codebase
+# named `my_app` also appears as `MyApp` in module names and `MY_APP` in
+# environment variables.
+#
+# WHY THIS FILE IS LOCAL AND NOT COMMITTED
+#
+# The check guards against *authoring* leaks: content pasted in from the
+# codebase this package was extracted from, carrying that codebase's name or
+# domain vocabulary with it. That only ever happens on a maintainer's machine.
+# A consumer who clones this package has nothing to leak, so the list would be
+# noise to them — and committing it would publish the very names the check
+# exists to keep out of the package.
+#
+# The consequence: on a clone without this file the check cannot run. `test.sh`
+# reports it as **skipped**, never as passed, so a vacuous run is never
+# mistaken for a clean one.
+#
+# WHAT BELONGS HERE
+#
+# Two categories, both from the codebase this was extracted from:
+#
+#   1. Its name, in every casing that appears in real text.
+#   2. Its domain vocabulary — the nouns that mean something specific there and
+#      nothing to anyone else. These leak more easily than the name, because
+#      they read as ordinary words while you are writing.
+#
+# Do not add generic words. `workflow`, `backlog`, and `active` are this
+# package's own vocabulary; listing them would fail the check on every file.
+
+# --- name ---
+my_app
+MyApp
+MY_APP
+
+# --- domain vocabulary ---
+SomeDomainNoun
+AnotherDomainNoun
