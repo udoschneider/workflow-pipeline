@@ -123,6 +123,10 @@ root/                    Copied 1:1 into the consuming repository root
 
 `root/` serves both delivery paths: OpenPackage copies it to the workspace root, and the plugin's init command copies the same tree. One source, two channels.
 
+## Developing this package
+
+Fixes go **here**, never into a consumer — an installed copy is replaced by the next update, so a local edit vanishes silently. See [CONTRIBUTING.md](CONTRIBUTING.md) for the loop, which repository to open a session in, and the traps that keep recurring.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Use it, fork it, ship it in commercial work; keep the copyright notice.
