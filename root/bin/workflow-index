@@ -87,6 +87,91 @@ thoughts/_DEPS.md
 backlog/_DEPS.md
 """
 
+# Files a consumer owns and accumulates content in. They are created when
+# absent and NEVER overwritten -- a reinstall that replaced one would destroy
+# real work, which is what happened to a consumer's scrap.md before these moved
+# out of the copied payload and in here.
+#
+# They live as literals rather than as files in the package because every
+# packaging path that copies a directory copies it *over* whatever is there.
+# The only version of this guarantee that survives an unknown packager is one
+# the artifact enforces itself.
+SEEDS = {
+    "project/scrap.md": """\
+# Scrap
+
+Scratch pad for unfiled notes. Run `/process-scrap` to triage.
+""",
+    "project/lessons.md": """\
+# Lessons Learned
+
+> Orphan entries that didn't cluster into a dedicated reference doc. Each of these either stands alone, or is waiting for companion lessons to justify extraction. Once a group of lessons shares a topic, promote them into a reference doc and leave a pointer here.
+
+Run `/prune-lessons` periodically to triage entries into references, code comments, or the bin.
+
+Entries are grouped under a topic heading (`## Development Environment`, `## Testing`, …) and each lesson is an `###` heading phrased as the takeaway, not the symptom:
+
+### A one-line title stating the rule, not the incident
+
+The body explains what happened, why the obvious reading was wrong, and what to do instead. Keep the concrete detail — the specific error text, the exact command — because that is what makes the lesson findable later.
+""",
+    "project/reference/_INDEX.md": """\
+# Reference Index
+
+Topic-based reference docs for this project. Each entry summarizes what the doc covers and when to consult it — in enough detail that the agent can rule a doc *out* without opening it, which is the whole reason this index exists.
+
+Maintained by `/prune-lessons`, which promotes clusters of related lessons out of `project/lessons.md` into a synthesized reference doc here and adds its entry in the same pass. **No orphan references:** a doc without an entry is invisible, and an entry without a doc is a dangling pointer.
+
+This file starts empty. It fills as lessons accumulate and cluster — a reference doc extracted before there is anything to synthesize is just a lesson with more ceremony.
+
+## Entry format
+
+```markdown
+## filename.md
+
+**Topic:** <one-line topic>
+**Covers:** <2-3 lines on scope — what's inside, what decisions or patterns are captured>
+**Consult when:** <the situation where the agent should reach for it>
+```
+
+<!-- Entries go below, alphabetically by filename. -->
+""",
+    "project/workflow/README.local.md": """\
+# Workflow Pipeline — local overlay
+
+Project-specific mechanics for this repository. Read alongside `README.md`; **this file wins on conflict.**
+
+`README.md` is installed from the `workflow-pipeline` package and replaced wholesale on every update. This file is never touched by it, so anything true only of *this* project belongs here — and nothing else does.
+
+**The test for whether something belongs here:** would it be true in a different project using the same pipeline? If yes, it belongs upstream in the package, not in this file. An overlay that accumulates general rules is just a slower fork.
+
+Delete any heading below that doesn't apply. An empty overlay is a perfectly good overlay.
+
+## Commands
+
+The spec refers to regenerating the indexes and resolving the sparring vault without naming how, because that differs per project. Name it here if yours differs from the default:
+
+- **Regenerate indexes:** `bin/workflow-index`
+- **Resolve the vault root:** `bin/workflow-index vault`
+
+## Close-out
+
+The spec states the obligations at close-out — walk each `## Acceptance criteria` bullet before an item may move to `completed/`, and record an intervention level per closure — but names nothing that performs them. Name yours here: the skill or command, what it walks, and where the intervention record is written.
+
+## Instrumentation
+
+If you keep a durable record of closures, cadences, or intervention levels, say where it lives and what reads it. The pipeline works without any of this.
+
+## Domain vocabulary
+
+The spec's examples are deliberately generic. If your domain has canonical terms that a sparring stance should reason in — the "domain canonicality" stance in particular — name them here so a spar can be held to them.
+
+## Anything else this project does differently
+
+Worktree conventions, symlinked machine-local config, extra stages, house rules on filenames. Keep each entry short and say *why*, not just *what* — the why is what survives contact with a change.
+""",
+}
+
 
 # --- Frontmatter parsing ------------------------------------------------
 
@@ -216,6 +301,26 @@ def list_md(directory):
     return [e for e in entries if e.endswith(".md") and e not in INDEX_FILES]
 
 
+def restore_own_exec_bit():
+    """Make this file executable again if a packager stripped the bit.
+
+    Observed in the wild: an install landed the script mode 0644, so
+    `bin/workflow-index` -- the command the docs and every index-reading skill
+    name -- failed with "permission denied", while `python3 bin/workflow-index`
+    worked. Since reaching this line means the script is already running, it can
+    repair the condition for every later invocation.
+    """
+    try:
+        path = os.path.abspath(__file__)
+        mode = os.stat(path).st_mode
+        if not mode & 0o111:
+            os.chmod(path, mode | 0o755)
+    except OSError:
+        # A read-only checkout is a legitimate state. The script still works
+        # when invoked through the interpreter, so this is not worth failing on.
+        pass
+
+
 def ensure_scaffold(root):
     """Create any missing stage directory, returning the ones created.
 
@@ -242,6 +347,15 @@ def ensure_scaffold(root):
     if not os.path.exists(ignore):
         write_file(ignore, GITIGNORE)
         created.append(ignore)
+
+    # `root` is the project subdirectory; the seed keys are repo-relative, so
+    # they resolve against its parent.
+    repo = os.path.dirname(os.path.abspath(root))
+    for relative, body in SEEDS.items():
+        path = os.path.join(repo, relative)
+        if not os.path.exists(path):
+            write_file(path, body)
+            created.append(relative)
 
     return created
 
@@ -569,6 +683,8 @@ def main(argv):
     if check:
         sys.stdout.write("Workflow index: sources valid ✓\n")
         return 0
+
+    restore_own_exec_bit()
 
     created = ensure_scaffold(root)
     for path in created:

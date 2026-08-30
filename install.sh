@@ -128,13 +128,16 @@ seed_file "$PKG/root/project/workflow/.gitignore" "project/workflow/.gitignore"
 # Seeded, emphatically not synced: this is the one file in the pipeline the
 # consumer owns outright, and overwriting it would delete the only record of
 # how their project differs.
-seed_file "$PKG/root/project/workflow/README.local.md" "project/workflow/README.local.md"
 seed_file "$PKG/root/project/workflow/config.json.example" "project/workflow/config.json.example"
-seed_file "$PKG/root/project/scrap.md" "project/scrap.md"
-seed_file "$PKG/root/project/lessons.md" "project/lessons.md"
-# The third memory tier. Seeded, not synced: once it has entries the consumer
-# owns it, and re-installing must never blank someone's reference index.
-seed_file "$PKG/root/project/reference/_INDEX.md" "project/reference/_INDEX.md"
+
+# seeds/ holds everything a consumer owns and writes into. It is a sibling of
+# root/, not part of it, so a packager copying root/ wholesale cannot reach it
+# -- one copied over a consumer's scrap.md and destroyed three notes. The
+# generator also writes these when absent, so they still arrive on install
+# paths that never see this script.
+for seed in $(cd "$PKG/seeds" && find . -type f | sed 's|^\./||'); do
+  seed_file "$PKG/seeds/$seed" "$seed"
+done
 
 for stage in thoughts backlog active completed rejected inbox; do
   seed_file "$PKG/root/project/workflow/$stage/.gitkeep" "project/workflow/$stage/.gitkeep"

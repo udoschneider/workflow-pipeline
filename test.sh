@@ -119,7 +119,10 @@ for path in $(grep -rhoE 'project/[A-Za-z0-9_./-]+\.md' $(shipped_files) 2>/dev/
     *YYYYMMDD*|*TOPIC*) continue ;;
     *_MAP.md|*_DEPS.md) continue ;;
   esac
-  [ -e "$PKG/root/$path" ] || fail "shipped file names $path, which the scaffold does not create"
+  # A named path is satisfied by either half of the delivered tree: root/ is
+  # copied, seeds/ is created-if-absent. Both end up in the consumer.
+  [ -e "$PKG/root/$path" ] || [ -e "$PKG/seeds/$path" ] \
+    || fail "shipped file names $path, which neither root/ nor seeds/ provides"
 done
 [ "$failures" -eq "$before" ] && pass "every path the docs name is one the scaffold creates"
 
@@ -145,7 +148,7 @@ git -C "$D" init -q
 #   git-hooks/                 has its own installer
 #   .claude-plugin/            plugin manifests, read in place
 #   AGENTS.md                  wired via --wire-agents, not placed as a file
-for f in $(cd "$PKG" && find root skills commands -type f | sed 's|^\./||'); do
+for f in $(cd "$PKG" && find root skills commands seeds -type f | sed 's|^\./||'); do
   case "$f" in
     commands/workflow-pipeline-init.md) continue ;;
   esac
@@ -181,6 +184,50 @@ for skill_dir in "$PKG"/skills/*/; do
     || fail "commands/$name.md does not point at the skill"
 done
 [ "$failures" -eq "$before" ] && pass "every skill is reachable as a slash command"
+
+before=$failures
+# Nothing a consumer owns may sit in root/. Every install path except this
+# package's own installer copies root/ wholesale, over whatever is already
+# there -- so a file in root/ that accumulates content is destroyed on every
+# update. That is not hypothetical: a consumer lost three notes from scrap.md
+# this way before these moved to seeds/ and into the generator.
+for owned in scrap.md lessons.md _INDEX.md README.local.md; do
+  found=$(find "$PKG/root" -name "$owned" 2>/dev/null | head -1)
+  [ -z "$found" ] || fail "$owned is in root/, where a wholesale copy will overwrite it"
+done
+[ "$failures" -eq "$before" ] && pass "no consumer-owned file sits in the copied payload"
+
+before=$failures
+# The seed guarantee has to hold in the artifact, not just in install.sh --
+# most consumers never run install.sh.
+S="$(mktemp -d)"
+mkdir -p "$S/project/workflow"
+cp "$PKG/root/project/workflow/README.md" "$S/project/workflow/"
+(cd "$S" && python3 "$PKG/root/bin/workflow-index" >/dev/null 2>&1)
+
+for seed in project/scrap.md project/lessons.md project/reference/_INDEX.md \
+            project/workflow/README.local.md; do
+  [ -f "$S/$seed" ] || fail "generator did not create $seed"
+done
+
+echo "CONSUMER CONTENT" >> "$S/project/scrap.md"
+(cd "$S" && python3 "$PKG/root/bin/workflow-index" >/dev/null 2>&1)
+grep -q "CONSUMER CONTENT" "$S/project/scrap.md" \
+  || fail "generator overwrote a seed file that already existed"
+rm -rf "$S"
+[ "$failures" -eq "$before" ] && pass "seeds are created when absent and never overwritten"
+
+before=$failures
+# A packager stripped this bit in the wild, and the command every skill names
+# then fails with "permission denied" while the interpreter form still works.
+X="$(mktemp -d)"
+cp "$PKG/root/bin/workflow-index" "$X/workflow-index"
+chmod 644 "$X/workflow-index"
+mkdir -p "$X/project/workflow"
+(cd "$X" && python3 ./workflow-index >/dev/null 2>&1)
+[ -x "$X/workflow-index" ] || fail "generator did not restore its own executable bit"
+rm -rf "$X"
+[ "$failures" -eq "$before" ] && pass "generator restores an executable bit a packager stripped"
 
 echo "behaviour"
 before=$failures

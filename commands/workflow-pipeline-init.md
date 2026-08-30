@@ -17,12 +17,12 @@ Everything you copy already exists at `${CLAUDE_PLUGIN_ROOT}/root/`, laid out ex
 
 **Create only if absent** — the user owns these the moment they exist, and they accumulate real content:
 
-- `project/scrap.md`
-- `project/lessons.md`
-- `project/reference/_INDEX.md`
 - `project/workflow/config.json.example`
 - `project/workflow/.gitignore`
 - `project/workflow/{thoughts,backlog,active,completed,rejected,inbox}/.gitkeep`
+- everything under `${CLAUDE_PLUGIN_ROOT}/seeds/`, which is the four files the user writes into: `project/scrap.md`, `project/lessons.md`, `project/reference/_INDEX.md`, `project/workflow/README.local.md`
+
+The seeds live outside `root/` precisely so a wholesale copy cannot reach them. If one already exists, leave it — a consumer once lost three notes to a reinstall that replaced `scrap.md`. Running `bin/workflow-index` also writes any that are missing, so copying them here is a convenience, not the guarantee.
 
 **Never silently overwrite a file in the second group.** `lessons.md` and `scrap.md` are exactly the files a user has been writing into for months. If one exists, leave it and say so.
 
@@ -34,7 +34,7 @@ Look for `project/workflow/` first. If it exists, this is a re-run or an upgrade
 
 ### 2. Copy
 
-Copy from `${CLAUDE_PLUGIN_ROOT}/root/` into the repository root, preserving the tree. Set the executable bit on `bin/workflow-index`.
+Copy from `${CLAUDE_PLUGIN_ROOT}/root/` into the repository root, preserving the tree, then from `${CLAUDE_PLUGIN_ROOT}/seeds/` **skipping any file that already exists**. Set the executable bit on `bin/workflow-index` — packagers strip it, and the command every skill names then fails with "permission denied".
 
 ### 3. Confirm the ignore rules landed
 

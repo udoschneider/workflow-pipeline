@@ -117,11 +117,13 @@ git-hooks/               Optional git post-checkout / post-merge, + installer
 root/                    Copied 1:1 into the consuming repository root
   bin/workflow-index
   project/workflow/…     The spec, config example, and stage scaffold
-  project/scrap.md       Shape only
-  project/lessons.md     Shape only
+seeds/                   Files YOU own — created if absent, never overwritten
+  project/scrap.md, lessons.md, reference/_INDEX.md, workflow/README.local.md
 ```
 
 `root/` serves both delivery paths: OpenPackage copies it to the workspace root, and the plugin's init command copies the same tree. One source, two channels.
+
+**`seeds/` is deliberately not inside `root/`.** Everything in `root/` gets copied *over* whatever is already there, on every update — so a file you write into cannot live there. A consumer lost three notes from `scrap.md` that way. The four files you own sit outside the copied payload, and `bin/workflow-index` writes each one **only when it is absent**, so they still arrive on install paths that never see `install.sh` and are never replaced once they hold your content.
 
 ## Developing this package
 
