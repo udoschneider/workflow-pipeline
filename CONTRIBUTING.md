@@ -29,6 +29,14 @@ Bugs surface in consumers. Fixes happen here. Verification happens in both.
    `install.sh` resolves the package root from its own location, so it installs whatever is on disk, committed or not. **Push is not in the inner loop.** Iterate against the working copy; push when the fix is real.
 5. **Push, then update the consumer for real** and run the consumer's own gate. A consumer that pins by checksum needs its recorded hashes refreshed as part of that step.
 
+### Pull before you update a consumer
+
+If a consumer installs from a local clone of this package rather than from the remote, **update that clone first, every time.** The install takes whatever is on disk; a stale clone therefore produces a consumer that is *internally consistent and silently out of date*.
+
+That combination is the dangerous one. A consumer pinning by checksum will pass its own gates afterwards — the recorded hash matches what was installed, which is the only thing it checks. Nothing compares the installed version against upstream, so there is no signal at all.
+
+Observed: a consumer ran for a day on a generator missing two fixes, with every gate green, because the fidelity check it did have compared generated *output* — and the missing fixes changed side effects, not output.
+
 ### Which repository to open a session in
 
 **This one, by default.** Nearly all editing happens here, this is where `test.sh` runs, and you can install into a consumer from here at any point.
