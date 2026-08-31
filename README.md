@@ -45,8 +45,14 @@ The plugin gives you the skills and the index-refresh hooks. `/workflow-pipeline
 ### With OpenPackage
 
 ```sh
-npx opkg install gh@udoschneider/workflow-pipeline
+npx opkg install gh@udoschneider/workflow-pipeline --conflicts overwrite
 ```
+
+**`--conflicts overwrite` is not optional here.** OpenPackage defaults to `namespace`, which on a collision installs `project/workflow/workflow-pipeline-README.md` beside your existing `project/workflow/README.md` rather than replacing it — and renames every skill and the generator to match. Every reference inside this package is by path, so all of them break at once.
+
+The failure is silent and worse than a no-op. Observed on a real consumer: the install reported success, appended a section to `CLAUDE.md` saying *"read `project/workflow/README.md`"*, and left that file as the reader's own outdated copy — with the current spec sitting unread next to it under a different name. A greenfield install has no collisions and never shows this; the consumer it hurts is the one migrating from an older copy, which is the common case for adopting this at all.
+
+Your own files are not at risk from `overwrite`: everything you write into lives in `seeds/`, which OpenPackage does not copy, and which `bin/workflow-index` creates only when absent.
 
 Installs the skills into whichever agent platforms are detected, and copies `root/` into the workspace root. OpenPackage does not map agent hooks, so nothing auto-refreshes on this path — which costs less than it sounds like, because the skills regenerate the indexes themselves before reading. See [Keeping the indexes fresh](#keeping-the-indexes-fresh).
 
