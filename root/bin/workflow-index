@@ -26,6 +26,16 @@ Usage:
     bin/workflow-index --check          validate sources, write nothing
     bin/workflow-index --root DIR       project subdirectory (default "project")
     bin/workflow-index vault            resolve and print the sparring vault root
+    bin/workflow-index sweep TOKEN...   search every prior-art corpus for TOKENs
+    bin/workflow-index sweep --full ... same, without eliding long index rows
+
+`sweep` is the prior-art check a spar runs *before* its first round. It reports
+each corpus separately under the question only that corpus answers, because the
+recorded failure mode is substitution rather than omission -- checking the
+pipeline feels like checking for prior art, and quietly discharges the instinct
+to check the reference tree, the lessons, and the vault. It prints matching
+*lines*, never filenames, and reports an unreachable vault as an error rather
+than as an empty result.
 
 `--check` validates the *committed source* (every thoughts/*.md parses and
 carries a `summary:`) rather than the generated files, which are gitignored and
@@ -149,9 +159,10 @@ Delete any heading below that doesn't apply. An empty overlay is a perfectly goo
 
 ## Commands
 
-The spec refers to regenerating the indexes and resolving the sparring vault without naming how, because that differs per project. Name it here if yours differs from the default:
+The spec refers to regenerating the indexes, sweeping the prior art, and resolving the sparring vault without naming how, because that differs per project. Name it here if yours differs from the default:
 
 - **Regenerate indexes:** `bin/workflow-index`
+- **Sweep the prior art before a spar:** `bin/workflow-index sweep <token> ...`
 - **Resolve the vault root:** `bin/workflow-index vault`
 
 ## Close-out
@@ -636,6 +647,161 @@ def resolve_vault(root):
     return vault_root, None
 
 
+# --- Prior-art sweep ----------------------------------------------------
+
+# The corpora a spar must check before its first round, each paired with the
+# question only it answers. The pairing is the point: the recorded failure is
+# not a bad grep but a *substituted* one -- running the pipeline sweep feels
+# like "I checked for prior art" and silently discharges the instinct to check
+# the others. Sections carrying four different questions cannot collapse into
+# one undifferentiated "I grepped".
+#
+# `reference` is here because a pipeline-only sweep sees decisions *in flight*
+# and misses decisions *already made*, and presenting a settled, documented
+# requirement as a fresh insight is worse than missing a thought.
+SWEEP_CORPORA = (
+    ("pipeline", "has this project already decided this?", ("workflow",)),
+    ("reference", "has it already been written down as settled?", ("reference",)),
+    ("lessons", "has this bitten us before?", ("lessons.md",)),
+)
+SWEEP_VAULT = ("vault", "has the maintainer already read about this?")
+# Matches _MAP.md's own summary budget: enough of a row to decide whether to
+# open the file, which is the only decision this output supports. Rows are the
+# payload -- a listing that shows filenames instead is the `-l` failure this
+# sweep exists to make impossible, so lines are never suppressed, only elided.
+SWEEP_SNIPPET = 240
+SWEEP_MAX_HITS = 40
+# Attachments and build output, not notes.
+SWEEP_SKIP_DIRS = (".obsidian", ".trash", ".git", "node_modules", "_build", "deps")
+
+
+def iter_markdown(paths):
+    """Yield every .md file under the given files and directories, sorted."""
+    for path in paths:
+        if os.path.isfile(path):
+            yield path
+        elif os.path.isdir(path):
+            for dirpath, dirnames, filenames in os.walk(path):
+                dirnames[:] = sorted(
+                    name
+                    for name in dirnames
+                    if not name.startswith(".") and name not in SWEEP_SKIP_DIRS
+                )
+                for name in sorted(filenames):
+                    if name.endswith(".md"):
+                        yield os.path.join(dirpath, name)
+
+
+def search_corpus(paths, needles):
+    """Case-insensitively find every line matching any needle.
+
+    Returns (hits, per-needle counts). Hits carry the line itself, never just
+    the filename: a summary index exists precisely to hold the topic when the
+    filename does not, so a files-with-matches result throws away the signal
+    the index was built to carry.
+    """
+    hits = []
+    counts = dict.fromkeys(needles, 0)
+    for path in iter_markdown(paths):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for lineno, line in enumerate(handle, 1):
+                    lowered = line.lower()
+                    matched = [needle for needle in needles if needle in lowered]
+                    if not matched:
+                        continue
+                    hits.append((path, lineno, line.strip()))
+                    for needle in matched:
+                        counts[needle] += 1
+        except OSError:
+            continue
+    return hits, counts
+
+
+def render_hits(hits, full):
+    """Format one corpus's hits, eliding the tail rather than the lines."""
+    lines = []
+    for path, lineno, text in hits[:SWEEP_MAX_HITS]:
+        if not full and len(text) > SWEEP_SNIPPET:
+            text = text[:SWEEP_SNIPPET] + " …"
+        lines.append("  {}:{}: {}".format(path, lineno, text))
+    remaining = len(hits) - SWEEP_MAX_HITS
+    if remaining > 0:
+        lines.append(
+            "  … {} more in this corpus. Narrow the tokens, or re-run with"
+            " --full and read them.".format(remaining)
+        )
+    return lines
+
+
+def sweep(root, tokens, full):
+    """Sweep every prior-art corpus for the tokens and report per corpus.
+
+    One command rather than a documented list of greps, because the documented
+    list is what gets half-run: the vault step has been skipped in whole
+    sessions, and an unreachable vault reads identically to an empty one. Here
+    every corpus is either reported with a count or reported as broken.
+
+    Returns (report, vault_error) so the caller can exit non-zero on a vault
+    that could not be searched while still printing everything it did search.
+    """
+    needles = [token.lower() for token in tokens]
+    out = ["Prior-art sweep — tokens: {}".format(", ".join(tokens)), ""]
+    hit_totals = dict.fromkeys(needles, 0)
+
+    sections = [
+        (label, question, [os.path.join(root, part) for part in parts])
+        for label, question, parts in SWEEP_CORPORA
+    ]
+
+    vault_root, vault_error = resolve_vault(root)
+    if vault_root:
+        sections.append((SWEEP_VAULT[0], SWEEP_VAULT[1], [vault_root]))
+
+    for label, question, paths in sections:
+        hits, counts = search_corpus(paths, needles)
+        for needle, count in counts.items():
+            hit_totals[needle] += count
+        out.append("{} — {}".format(label.upper(), question))
+        out.append("  {} hit(s) across {}".format(len(hits), ", ".join(paths)))
+        out.extend(render_hits(hits, full))
+        out.append("")
+
+    if vault_error:
+        # Loud rather than absent. This is why the sweep prints a report rather
+        # than returning a list: a silently unsearched vault turns a spar's
+        # narrowed fact base into something nobody can see was narrowed.
+        out.append("{} — {}".format(SWEEP_VAULT[0].upper(), SWEEP_VAULT[1]))
+        out.append("  !! NOT SEARCHED — the vault is unreachable.")
+        out.extend("  " + line for line in vault_error.splitlines())
+        out.append(
+            "  Say so in the dialogue before continuing: this spar has no"
+            " prior-notes check."
+        )
+        out.append("")
+
+    dead = [token for token, needle in zip(tokens, needles) if hit_totals[needle] == 0]
+    if dead:
+        # A token drawn from the prompt rather than the subject matter -- a
+        # vendor, a library, a phrase coined one sentence ago -- is new to the
+        # repo by construction, so its clean result reads exactly like "no
+        # prior art" while carrying no information at all.
+        out.append(
+            "Zero hits anywhere: {}. A token taken from the prompt rather than"
+            " the subject matter is new to the repo by construction, so that"
+            " result is uninformative — re-run with tokens for what the thing"
+            " *does* and what it would replace.".format(", ".join(dead))
+        )
+        out.append("")
+
+    out.append(
+        "Axes worth a second pass: the topic's domain nouns; the solution's"
+        " mechanism (gate, oracle, validator, importer, cache); and the bare"
+        " name of any existing tool this extends."
+    )
+    return "\n".join(out) + "\n", vault_error
+
+
 # --- Entry point --------------------------------------------------------
 
 
@@ -644,6 +810,8 @@ def main(argv):
     root = DEFAULT_ROOT
     check = False
     command = None
+    tokens = []
+    full = False
 
     while args:
         arg = args.pop(0)
@@ -656,12 +824,33 @@ def main(argv):
             root = args.pop(0)
         elif arg == "vault":
             command = "vault"
+        elif arg == "sweep":
+            command = "sweep"
+        elif arg == "--full":
+            full = True
         elif arg in ("-h", "--help"):
             sys.stdout.write(__doc__)
             return 0
+        elif command == "sweep":
+            tokens.append(arg)
         else:
             sys.stderr.write("unknown argument: {}\n".format(arg))
             return 2
+
+    if command == "sweep":
+        if not tokens:
+            sys.stderr.write(
+                "sweep needs at least one token.\n"
+                "  Derive them from what the thing *does* and what it would"
+                " replace, not from the words in the request.\n"
+            )
+            return 2
+        report, vault_error = sweep(root, tokens, full)
+        sys.stdout.write(report)
+        # Non-zero on an unsearched vault: the report is still complete for
+        # every corpus that *was* searched, but a caller must be able to tell
+        # a clean sweep from a partial one without parsing prose.
+        return 1 if vault_error else 0
 
     if command == "vault":
         vault_root, error = resolve_vault(root)

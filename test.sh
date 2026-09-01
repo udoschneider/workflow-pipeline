@@ -303,6 +303,54 @@ rm -rf "$S" "$C"
 [ "$failures" -eq "$before" ] && pass "generator rebuilds a scaffold a packager dropped"
 
 before=$failures
+# The sweep's whole value is that a corpus it could not search is reported as
+# broken rather than as empty -- an unreachable vault reads exactly like a
+# vault with nothing in it, and that is how the step went silently skipped.
+W="$(mktemp -d)"
+mkdir -p "$W/project/workflow/thoughts" "$W/project/reference" "$W/vault"
+printf 'a settled decision about widgets\n' > "$W/project/reference/widgets.md"
+printf 'a widget lesson\n' > "$W/project/lessons.md"
+printf -- '---\ntype: code\nsummary: |\n  A widget thought.\n---\n' \
+  > "$W/project/workflow/thoughts/20260101_widget.md"
+printf 'the maintainer read about widgets\n' > "$W/vault/note.md"
+
+printf '{"vault_root": "%s"}' "$W/vault" > "$W/project/workflow/config.json"
+out="$(cd "$W" && python3 "$PKG/root/bin/workflow-index" sweep widgets 2>&1)"
+status=$?
+[ "$status" -eq 0 ] || fail "sweep of a healthy tree exited $status"
+for corpus in PIPELINE REFERENCE LESSONS VAULT; do
+  echo "$out" | grep -q "^$corpus" || fail "sweep omitted the $corpus corpus"
+done
+# Rows, not filenames: a files-with-matches listing is the failure this exists
+# to make impossible.
+echo "$out" | grep -q 'a settled decision about widgets' \
+  || fail "sweep printed no matching line for the reference corpus"
+echo "$out" | grep -q 'the maintainer read about widgets' \
+  || fail "sweep did not search the vault"
+
+# A token that hits nothing anywhere is the one that reads like "no prior art"
+# while carrying no information, so it is called out by name.
+out="$(cd "$W" && python3 "$PKG/root/bin/workflow-index" sweep widgets zzznotathing 2>&1)"
+echo "$out" | grep -q 'Zero hits anywhere: zzznotathing' \
+  || fail "sweep did not flag a token that matched nothing"
+
+printf '{"vault_root": "%s/gone"}' "$W" > "$W/project/workflow/config.json"
+out="$(cd "$W" && python3 "$PKG/root/bin/workflow-index" sweep widgets 2>&1)"
+status=$?
+[ "$status" -eq 1 ] || fail "sweep with an unreachable vault exited $status, want 1"
+echo "$out" | grep -q 'NOT SEARCHED' \
+  || fail "sweep reported an unreachable vault as an empty one"
+# The corpora it *could* search are still reported: a broken vault must not
+# cost the spar the rest of its prior art.
+echo "$out" | grep -q 'a settled decision about widgets' \
+  || fail "sweep dropped searchable corpora when the vault was unreachable"
+
+(cd "$W" && python3 "$PKG/root/bin/workflow-index" sweep >/dev/null 2>&1)
+[ $? -eq 2 ] || fail "sweep with no tokens did not exit 2"
+rm -rf "$W"
+[ "$failures" -eq "$before" ] && pass "sweep reports every corpus, and a broken one as broken"
+
+before=$failures
 # The README states the indexes and the local config are gitignored. Assert it
 # by asking git, in a real repository, rather than by checking a file exists --
 # a .gitignore with the wrong relative paths exists and ignores nothing, and

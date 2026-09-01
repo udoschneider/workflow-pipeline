@@ -44,9 +44,10 @@ When proposing `thought` or `backlog`, **always offer a re-spar round** before w
 
 If the user accepts the re-spar:
 
-1. Follow the **Thought Refinement** workflow in `project/workflow/README.md` (Socratic dialogue + adversarial round, one question at a time, 2–4 rounds).
-2. For `backlog` destinations, additionally derive `## Acceptance criteria` per the workflow's promotion-step questions, and offer the second-pass stance round per § "Sparring stances."
-3. After refinement, draft the destination file content and present for final review before writing.
+1. **Sweep the prior art first** — `bin/workflow-index sweep <token> ...`, with tokens drawn from what the item *does* and what it would replace, never from its own wording. One command over four corpora (pipeline, reference tree, lessons, vault); running only the first is what makes a partial sweep look like a complete one. Relay any `!! NOT SEARCHED` corpus in the dialogue rather than treating it as empty. See `project/workflow/README.md` § "When sparring on a rough idea"; if `README.local.md` names a different command, use that one.
+2. Follow the **Thought Refinement** workflow in `project/workflow/README.md` (Socratic dialogue + adversarial round, one question at a time, 2–4 rounds).
+3. For `backlog` destinations, additionally derive `## Acceptance criteria` per the workflow's promotion-step questions, and offer the second-pass stance round per § "Sparring stances."
+4. After refinement, draft the destination file content and present for final review before writing.
 
 If the user declines re-spar:
 

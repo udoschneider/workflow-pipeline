@@ -11,7 +11,7 @@ Ideas arrive faster than they can be worked. Left in a flat TODO list they rot i
 | Piece               | What it is                                                                                             |
 | ------------------- | ------------------------------------------------------------------------------------------------------ |
 | `project/workflow/README.md` | The spec — stage semantics, the frontmatter schema, promotion rules, sparring stances, acceptance criteria |
-| `bin/workflow-index`| Generates `_MAP.md` and the two `_DEPS.md` indexes from frontmatter. Stdlib-only Python, no install     |
+| `bin/workflow-index`| Generates `_MAP.md` and the two `_DEPS.md` indexes from frontmatter, and runs the pre-spar prior-art sweep. Stdlib-only Python, no install |
 | Six skills          | `/process-scrap`, `/process-inbox`, `/what-next`, `/audit-thoughts`, `/prune-completed`, `/prune-lessons` — each shipped twice, as a skill *and* as a slash command, because agents disagree about which one a `/name` invocation reads |
 | Hooks               | Keep the generated indexes fresh after every workflow edit                                              |
 | Scaffold            | The six stage directories, plus `scrap.md` and `lessons.md` shapes                                       |
@@ -87,7 +87,30 @@ All three are append-only and skip when a pointer is already present, so re-runn
 
 1. `cp project/workflow/config.json.example project/workflow/config.json` and set `vault_root` if you spar against a local knowledge vault. Verify with `bin/workflow-index vault`. Skip if you don't.
 2. Write your first thought. Give it `type:` and a `summary:` block scalar — `bin/workflow-index --check` fails without the summary, deliberately.
-3. Say "let's spar on X" and check the agent runs a Socratic round *and* an adversarial one. If it just agrees with you, the wiring above didn't take.
+3. Say "let's spar on X" and check the agent runs `bin/workflow-index sweep` *before* its first question, then a Socratic round *and* an adversarial one. If it just agrees with you, the wiring above didn't take.
+
+## The prior-art sweep
+
+    bin/workflow-index sweep <token> ...
+
+Run before the first sparring round. It searches four corpora and reports each one separately, under the question only that corpus answers:
+
+| Corpus | Answers |
+| --- | --- |
+| `project/workflow/` | has this project already decided this? |
+| `project/reference/` | has it already been written down as settled? |
+| `project/lessons.md` | has this bitten us before? |
+| your vault | has the maintainer already read about this? |
+
+**One command rather than four greps, because the failure mode is substitution, not omission.** Searching the pipeline *feels* like checking for prior art and quietly discharges the instinct to check the rest, so the sweep that gets run is a partial one and nothing about its output says so. Four labelled sections carrying four different questions cannot collapse into one undifferentiated "I grepped".
+
+Three properties are the point, each a failure someone actually shipped:
+
+- It prints matching **lines, never filenames**. A summary index exists precisely to carry the topic when the filename does not; a files-with-matches listing throws away the signal the index was built for.
+- A corpus it could not search comes back as `!! NOT SEARCHED` with a non-zero exit, never as zero hits. An unreachable vault otherwise reads exactly like an empty one, which is how the step goes skipped unnoticed.
+- A token matching nothing anywhere is named in the output. A vendor, a library, or a phrase coined one sentence ago is new to the corpus by construction, so its clean result reads like "no prior art" while carrying no information. Derive tokens from what the thing *does* and what it would replace — that part the command cannot do for you.
+
+`project/reference/` and `project/lessons.md` are swept because the pipeline holds decisions *in flight* while those hold decisions *already made* and incidents *already had*. Presenting a settled, documented requirement as a fresh insight costs more than missing a thought does.
 
 ## Keeping the indexes fresh
 
@@ -141,4 +164,4 @@ MIT — see [LICENSE](LICENSE). Use it, fork it, ship it in commercial work; kee
 
 ## Status
 
-**0.1.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.
+**0.2.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.

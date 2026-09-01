@@ -23,7 +23,7 @@ Triage items from `project/scrap.md` into the workflow pipeline.
 
 For each scrap item, propose one of:
 
-- **thought** — idea needs refinement, create a thought file via the standard Socratic + adversarial workflow. If refinement involves non-trivial sparring (not a quick one-liner), follow the vault-consultation step from `project/workflow/README.md` ("When sparring on a rough idea") before engaging.
+- **thought** — idea needs refinement, create a thought file via the standard Socratic + adversarial workflow. If refinement involves non-trivial sparring (not a quick one-liner), run the prior-art sweep (below) with tokens for *this item* before engaging, per `project/workflow/README.md` ("When sparring on a rough idea").
 - **backlog** — actionable and well-defined enough to skip thought refinement, create a backlog item directly
 - **existing** — already tracked (cite the file), remove from scrap
 - **done** — already implemented (cite the code), remove from scrap
@@ -39,6 +39,14 @@ bin/workflow-index
 ```
 
 If `project/workflow/README.local.md` names a different command for this, use that one — it is the one the project's own gates run. Cheap and idempotent. Do not skip it on the assumption that a hook already ran — hooks are an optimisation here, not the guarantee, and they are absent entirely on some install paths.
+
+**Sweep the prior art before sparring any item.** The moment an item's disposition turns into real back-and-forth rather than one-line triage, run:
+
+```sh
+bin/workflow-index sweep <token> ...
+```
+
+Tokens come from what the item *does* and what it would replace, not from its own wording. This is one command over four corpora — pipeline, reference tree, lessons, vault — because running only the first is what makes a partial sweep look like a complete one. Relay any `!! NOT SEARCHED` corpus to the user in the dialogue rather than proceeding as though it were empty. Full rationale in `project/workflow/README.md` § "When sparring on a rough idea"; if `README.local.md` names a different command, use that one.
 
 1. Read `project/scrap.md`
 2. Read `project/workflow/thoughts/_MAP.md` and `project/workflow/backlog/_DEPS.md` for existing items
