@@ -128,7 +128,7 @@ The rule: every cost line must name a *specific* risk, file, or dependency that 
 
 ### 6. Surface smells — "What are you avoiding?"
 
-Compute five signals. **Hide the section entirely when all five are empty.**
+Compute six signals. **Hide the section entirely when all six are empty.**
 
 #### 6a. Stale-active items
 
@@ -207,6 +207,29 @@ Report nothing when nothing is overdue; otherwise render one line per overdue ta
 
 Never-stamped tasks (a fresh registry, or a task never run) show as "never stamped" and sort to the top — on first rollout expect several; running each once clears it.
 
+#### 6f. Over-full `active/`
+
+More than **three** non-cluster items in `project/workflow/active/`. This is the other half of the rule 6a already half-mechanizes (`project/workflow/README.md` § "Design Docs"): *"Active typically holds one item. Occasionally 2-3 thematically similar items."* Staleness is the signal for an item that stopped moving; this is the signal for too many started at once. Without it, the WIP limit is the one part of the active-stage contract nothing checks.
+
+```sh
+# Non-cluster items only — cluster docs outlive any single member and are
+# exempt here for the same reason they are exempt from 6a.
+ls project/workflow/active/*.md | wc -l
+```
+
+**Deliberately a smell, not a gate.** The spec says "typically" and explicitly allows 2-3, so this is a norm with legitimate exceptions. A blocking check on a soft norm teaches people to bypass checks, which costs more than the norm is worth — surface it, name what it costs, and let the maintainer judge.
+
+Report nothing at three or fewer; otherwise render:
+
+```
+- `active/` holds <N> items — the norm is ~1, occasionally 2-3 when thematically similar
+  <filename>  — last touched <YYYY-MM-DD>
+  ...
+  Either finish one this session, or bump the least-committed back to backlog.
+```
+
+Listing the last-touched dates is what makes the signal actionable rather than nagging: it shows *which* item to pick. When 6a and 6f both fire, render 6f after 6a and cross-reference — an over-full `active/` whose surplus items are also stale is one problem, not two.
+
 ### 7. Default-decline when nothing fits
 
 If steps 4–5 produce zero candidates after filtering by the effort/goal pair, **do not surface a poor match.** Render:
@@ -235,7 +258,7 @@ The full skill output is rendered in this order:
 
 ## What are you avoiding?
 
-[Smells from Step 6, omitting empty sub-sections; omit this whole heading if all five are empty]
+[Smells from Step 6, omitting empty sub-sections; omit this whole heading if all six are empty]
 ```
 
 No trailing summary. No "Hope this helps." The candidate block + smells block IS the output.
