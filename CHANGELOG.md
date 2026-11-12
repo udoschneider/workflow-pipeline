@@ -9,6 +9,27 @@ Versioning follows [SemVer](https://semver.org/). While the package is below 1.0
 - **minor** (`0.x.0`): a consumer must act after updating — a spec rule changed, a new gate needs wiring, citations need rewriting, a file was removed or renamed. The entry always carries a **Migrating** section.
 - **patch** (`0.x.y`): drop-in. Updating is the whole migration.
 
+## [0.4.0] — Unreleased
+
+Citation matching is looser and covers two forms it missed. Numbered headings stay allowed. Needs action only if `links` is wired into your gate: see **Migrating**.
+
+### Changed
+
+- A `§ "…"` citation that matches nothing as written now also matches with a leading section number ignored on both sides (`3.`, `1.4`, `§2`), then with case ignored, and with trailing `,` `.` `;` `:` inside the quotes dropped. Renumbering a memory file no longer breaks its citations, and you don't have to strip numbers to adopt the check. A citation that resolved, or was ambiguous, before keeps the same verdict.
+- `links` prints a warning (stderr, never a finding, never the exit code) for each memory file with numbered headings.
+- Spec § "Citing pipeline files and memory entries": numbered headings are allowed but not needed; prefer `§ "Heading"` to `§3` inside a doc; quote a readable clause of a long heading; what `links` can and cannot check.
+
+### Added
+
+- `§ \"Heading\"` inside a double-quoted code string is now read as a quoted citation. It used to be reported as `unquoted`.
+- From inside `reference/`, a sibling cited without its prefix (`other_topic.md § "Heading"`) is now checked when that file exists. Before, it was never checked.
+
+### Migrating
+
+1. Update the package.
+2. Run `bin/workflow-index links`. Findings can only come from sibling citations inside `reference/` that are now checked for the first time. Resolve them the same way as in 0.3.0's step 4. `links --fix` repoints a heading that moved to exactly one other memory file.
+3. Nothing to do about numbered headings. If you stripped them to get past 0.3.0, that remains fine.
+
 ## [0.3.0] — 2026-11-12
 
 A citation into the pipeline or the memory files may no longer dangle. Needs action: see **Migrating**.

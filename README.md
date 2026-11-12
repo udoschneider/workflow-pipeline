@@ -98,7 +98,7 @@ Re-run the path you installed with. `install.sh` and `/workflow-pipeline-init` r
     bin/workflow-index links          # exit 0 clean, 1 findings, 2 could not run
     bin/workflow-index links --fix    # repoint moved docs, mark pruned ones, print each repair
 
-Pipeline files move between stages and get pruned on purpose, and memory entries get triaged away, so every citation pointing at one eventually dangles — in code comments as often as in docs. `links` fails on any citation in the tracked tree that doesn't resolve: a bare stage path (`completed/20260101_slug.md`) must exist there or carry `(pruned)`, and a `` `project/lessons.md` § "Heading" `` citation must name a heading that exists. The spec's [Citing pipeline files and memory entries](root/project/workflow/README.md#citing-pipeline-files-and-memory-entries) has the convention.
+Pipeline files move between stages and get pruned on purpose, and memory entries get triaged away, so every citation pointing at one eventually dangles — in code comments as often as in docs. `links` fails on any citation in the tracked tree that doesn't resolve: a bare stage path (`completed/20260101_slug.md`) must exist there or carry `(pruned)`, and a `` `project/lessons.md` § "Heading" `` citation must name a heading that exists. Section numbers, case and trailing punctuation don't have to match, so renumbering a doc breaks nothing, and numbered headings only earn a warning. The spec's [Citing pipeline files and memory entries](root/project/workflow/README.md#citing-pipeline-files-and-memory-entries) has the convention.
 
 It runs only where you wire it — add the line to your pre-commit or CI gate. It is never part of `--check` or the hooks, so updating the package can't start failing your commits by itself. Choose what it scans in a committed `project/workflow/links.json` (`exclude`, `extensions`); without one it scans every tracked text file.
 
@@ -177,4 +177,4 @@ MIT — see [LICENSE](LICENSE). Use it, fork it, ship it in commercial work; kee
 
 ## Status
 
-**0.3.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.
+**0.4.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.

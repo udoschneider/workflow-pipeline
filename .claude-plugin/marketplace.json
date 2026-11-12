@@ -10,7 +10,7 @@
       "description": "An idea-lifecycle pipeline for coding agents. Six triage skills (/process-scrap, /process-inbox, /what-next, /audit-thoughts, /prune-completed, /prune-lessons), hooks that keep the generated indexes fresh, and /workflow-pipeline-init to scaffold it into a repository.",
       "source": "./",
       "strict": false,
-      "version": "0.3.0",
+      "version": "0.4.0",
       "keywords": [
         "workflow",
         "backlog",

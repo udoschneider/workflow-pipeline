@@ -485,6 +485,50 @@ out="$(links --fix 2>&1)"
 grep -q 'project/reference/topic.md § "Synthesized later"' "$L/src/moved.c" \
   || fail "--fix did not repoint a heading that moved to exactly one other memory file"
 
+# Numbered headings are allowed: a citation matches with or without the number,
+# and survives a renumber; case and trailing sentence punctuation are loosened
+# too. Two forms that went unchecked are now checked: escaped quotes in a code
+# string, and a sibling reference doc named without its `reference/` prefix. A
+# numbered heading warns but never fails, and a `§ "…"` with no path is left
+# alone -- which doc it means is context only a reader can see.
+cat > "$L/project/reference/numbered.md" <<'EOF2'
+# Numbered
+## 4. Async timing
+## 2026.3 changes
+## 1.2 Notes
+## 2. Notes
+In-doc: § "Async timing" and § "Gone" and §3 are not checked.
+Sibling: topic.md § "Synthesized later" and topic.md § "synthesized later," too.
+README.md § "Install" names a file that is no memory file.
+EOF2
+cat > "$L/src/num.py" <<'EOF2'
+a = "project/reference/numbered.md § \"3. Async timing\""
+b = 'project/reference/numbered.md § "Async timing"'
+c = "project/reference/numbered.md § \"2026.3 changes\""
+EOF2
+lg add -A && lg commit -qm numbered
+out="$(links 2>&1)"; code=$?
+[ "$code" -eq 0 ] || fail "links failed on numbered headings cited with, without, or with a stale number (exit $code): $out"
+echo "$out" | grep -q 'warning: project/reference/numbered.md has 3 numbered heading' \
+  || fail "links did not warn about numbered headings, or counted a version heading as one"
+printf 'Sibling gone: topic.md § "Never there".\n' >> "$L/project/reference/numbered.md"
+cat >> "$L/src/num.py" <<'EOF2'
+d = "project/reference/numbered.md § \"changes\""
+e = "project/reference/numbered.md § \"Notes\""
+EOF2
+lg add -A && lg commit -qm numbered-broken
+out="$(links 2>&1)"; code=$?
+[ "$code" -eq 1 ] || fail "links exited $code on broken numbered/sibling citations, expected 1"
+echo "$out" | grep -q 'numbered.md:9: missing-heading topic.md' \
+  || fail "links did not check a sibling reference cited without its reference/ prefix"
+echo "$out" | grep -q 'num.py:4: missing-heading' \
+  || fail "links let a citation match a version heading with its version stripped"
+echo "$out" | grep -q 'num.py:5: ambiguous-heading .* "Notes" matches 2' \
+  || fail "links did not report a heading made ambiguous by ignoring its number"
+[ "$(echo "$out" | grep -c ': [a-z-]* ')" -eq 3 ] \
+  || fail "links reported other than the 3 expected findings: $out"
+lg rm -q src/num.py project/reference/numbered.md && lg commit -qm unnumber
+
 # links.json narrows the scan, and refuses a typo'd key rather than ignoring it.
 printf 'see backlog/20260101_never_was\n' > "$L/src/vendored.txt"
 lg add -A && lg commit -qm vendored
