@@ -9,7 +9,7 @@ Versioning follows [SemVer](https://semver.org/). While the package is below 1.0
 - **minor** (`0.x.0`): a consumer must act after updating — a spec rule changed, a new gate needs wiring, citations need rewriting, a file was removed or renamed. The entry always carries a **Migrating** section.
 - **patch** (`0.x.y`): drop-in. Updating is the whole migration.
 
-## [0.3.0] — Unreleased
+## [0.3.0] — 2026-11-12
 
 A citation into the pipeline or the memory files may no longer dangle. Needs action: see **Migrating**.
 
