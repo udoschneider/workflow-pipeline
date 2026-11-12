@@ -160,6 +160,58 @@ rm -rf "$D"
 [ "$failures" -eq "$before" ] && pass "install.sh delivers every file the package ships"
 
 before=$failures
+# Five places state the version, and three install paths each read a different
+# one. They had already drifted (0.2.0 in openpackage.yml, 0.1.0 in both plugin
+# manifests) with nothing noticing -- and a consumer's .version is only useful
+# if the number in it means the same thing whichever path wrote it.
+v_opkg="$(grep '^version:' "$PKG/openpackage.yml" | awk '{print $2}')"
+v_plugin="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PKG/.claude-plugin/plugin.json")"
+v_market="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$PKG/.claude-plugin/marketplace.json")"
+v_log="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "$PKG/CHANGELOG.md" | tr -d '#[] ')"
+v_status="$(grep -A2 '^## Status' "$PKG/README.md" | grep -oE '\*\*[0-9]+\.[0-9]+\.[0-9]+' | tr -d '*')"
+for pair in "plugin.json:$v_plugin" "marketplace.json:$v_market" \
+            "newest CHANGELOG.md entry:$v_log" "README.md Status:$v_status"; do
+  [ "${pair##*:}" = "$v_opkg" ] \
+    || fail "${pair%%:*} says '${pair##*:}', openpackage.yml says '$v_opkg'"
+done
+[ "$failures" -eq "$before" ] && pass "every version field agrees ($v_opkg)"
+
+before=$failures
+# The installer records what it installed. Checked against a fresh copy of the
+# package so the commit and +dirty marker are deterministic: a clean commit
+# gives "<version> <sha>", an uncommitted edit adds "+dirty", and a tree with
+# no git metadata (a tarball) records the version alone.
+P="$(mktemp -d)"; T="$(mktemp -d)"
+cp -R "$PKG/." "$P/" && rm -rf "$P/.git"
+git -C "$T" init -q
+"$P/install.sh" "$T" >/dev/null 2>&1
+[ "$(cat "$T/project/workflow/.version" 2>/dev/null)" = "$v_opkg" ] \
+  || fail "install from a tarball wrote '$(cat "$T/project/workflow/.version" 2>/dev/null)', expected '$v_opkg'"
+
+git -C "$P" init -q && git -C "$P" add -A \
+  && git -C "$P" -c user.name=t -c user.email=t@t commit -qm t
+sha="$(git -C "$P" rev-parse --short HEAD)"
+"$P/install.sh" "$T" >/dev/null 2>&1
+[ "$(cat "$T/project/workflow/.version")" = "$v_opkg $sha" ] \
+  || fail "install from a clean checkout wrote '$(cat "$T/project/workflow/.version")', expected '$v_opkg $sha'"
+
+echo "# local edit" >> "$P/README.md"
+"$P/install.sh" "$T" >/dev/null 2>&1
+[ "$(cat "$T/project/workflow/.version")" = "$v_opkg $sha+dirty" ] \
+  || fail "install from a dirty checkout wrote '$(cat "$T/project/workflow/.version")', expected '$v_opkg $sha+dirty'"
+
+git -C "$T" check-ignore -q project/workflow/.version \
+  && fail "project/workflow/.version is gitignored; an update's diff would not show the version moving"
+
+"$P/install.sh" --dry-run "$T" >/dev/null 2>&1
+git -C "$P" checkout -q -- README.md
+"$P/install.sh" --dry-run "$T" >/dev/null 2>&1
+[ "$(cat "$T/project/workflow/.version")" = "$v_opkg $sha+dirty" ] \
+  || fail "--dry-run rewrote project/workflow/.version"
+rm -rf "$P" "$T"
+[ "$failures" -eq "$before" ] && pass "install.sh records the installed version in project/workflow/.version"
+
+before=$failures
 # Claude Code exposes a skill as /name by itself; OpenCode reads
 # .opencode/commands/ and does not. A skill without a command file installs
 # correctly there and is simply unreachable -- and every skill's own

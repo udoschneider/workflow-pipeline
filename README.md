@@ -89,6 +89,10 @@ All three are append-only and skip when a pointer is already present, so re-runn
 2. Write your first thought. Give it `type:` and a `summary:` block scalar — `bin/workflow-index --check` fails without the summary, deliberately.
 3. Say "let's spar on X" and check the agent runs `bin/workflow-index sweep` *before* its first question, then a Socratic round *and* an adversarial one. If it just agrees with you, the wiring above didn't take.
 
+## Updating
+
+Re-run the path you installed with. `install.sh` and `/workflow-pipeline-init` record the installed version in `project/workflow/.version` (OpenPackage tracks its own). Then read [CHANGELOG.md](CHANGELOG.md) and apply the **Migrating** steps of every entry newer than the version you came from, oldest first. A patch release has none, and a minor release always does.
+
 ## The prior-art sweep
 
     bin/workflow-index sweep <token> ...
@@ -164,4 +168,4 @@ MIT — see [LICENSE](LICENSE). Use it, fork it, ship it in commercial work; kee
 
 ## Status
 
-**0.2.0 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.
+**0.2.1 — unproven.** Extracted from a working private codebase where it has run for months, then genericized. The generator is pinned byte-for-byte against the original implementation over a 300+ item corpus, so the port is faithful; what is *not* yet proven is the install experience in a repository that didn't grow up with it. Expect rough edges and please report them.

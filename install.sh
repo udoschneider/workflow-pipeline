@@ -59,7 +59,19 @@ fi
 
 TARGET="$(cd "$TARGET" && pwd)"
 
-echo "workflow-pipeline $(grep '^version:' "$PKG/openpackage.yml" | awk '{print $2}')"
+VERSION="$(grep '^version:' "$PKG/openpackage.yml" | awk '{print $2}')"
+
+# The commit pins exactly what was copied; the version alone cannot, because
+# an install from an unreleased checkout carries the last release's number.
+# `+dirty` marks an install from uncommitted changes -- content that exists in
+# no commit. A tarball has no git metadata, so it records the version alone.
+COMMIT=""
+if git -C "$PKG" rev-parse --git-dir >/dev/null 2>&1; then
+  COMMIT="$(git -C "$PKG" rev-parse --short HEAD)"
+  [ -n "$(git -C "$PKG" status --porcelain)" ] && COMMIT="$COMMIT+dirty"
+fi
+
+echo "workflow-pipeline $VERSION${COMMIT:+ ($COMMIT)}"
 echo "  from: $PKG"
 echo "  into: $TARGET"
 echo "  skills → $SKILLS_DIR"
@@ -144,6 +156,16 @@ for stage in thoughts backlog active completed rejected inbox; do
 done
 
 [ "$DRY_RUN" -eq 0 ] && chmod +x "$TARGET/bin/workflow-index"
+
+# Which package version this tree runs. Without it, "which CHANGELOG migrations
+# haven't I applied?" has nothing to compare against on this path: OpenPackage
+# records its own version, a plain copy records nothing. Synced
+# (overwritten every install) and committed, so the diff of an update shows the
+# version moving alongside the files it moved.
+V="$(mktemp)"
+printf '%s%s\n' "$VERSION" "${COMMIT:+ $COMMIT}" > "$V"
+sync_file "$V" "project/workflow/.version"
+rm -f "$V"
 
 echo
 echo "  $synced synced, $seeded seeded, $kept already current"

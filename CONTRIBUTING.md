@@ -54,6 +54,15 @@ Two of its properties are worth understanding before you add to it:
 - **The delivery check runs `install.sh` and inspects the result**, rather than grepping its source. An earlier version asserted two things textually — *every skill has a command file* and *the installer copies everything in `root/`* — and an entire directory fell into the space between two rules that were each individually green. Behavioural checks have no between.
 - **The identity check reports `SKIPPED` on a fresh clone.** It reads `.identity-denylist`, which is deliberately not committed: publishing the list of names this package must never ship would publish exactly those names. If you maintain this package, copy `.identity-denylist.example` and fill it in. If you only consume it, that check is not yours to run — you have nothing to leak.
 
+## Versioning and the changelog
+
+Every change that reaches a consumer gets a line in `CHANGELOG.md` under the top entry. While below 1.0 the bump is decided by one question: **does a consumer have to do anything after updating?**
+
+- **Yes → minor** (`0.x.0`), and the entry gets a **Migrating** section: concrete steps, in order, that an agent syncing a consumer can follow without reconstructing them from the diff. A gate a consumer must wire, a citation form to rewrite, a file removed or renamed, a spec rule that changes what's allowed — all minor.
+- **No → patch** (`0.x.y`).
+
+The version lives in five places: `openpackage.yml`, both `.claude-plugin/` manifests, the newest `CHANGELOG.md` heading, and the README's Status line. `test.sh` fails when they disagree, so bump all five in the same commit. Keep the top entry `— Unreleased` until you tag; on release, replace that with the date and tag `vX.Y.Z`.
+
 ## Auditing before a release
 
 Read the package cold, more than once, and preferably across model families.

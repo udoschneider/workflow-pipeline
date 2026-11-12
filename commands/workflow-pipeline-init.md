@@ -14,6 +14,7 @@ Everything you copy already exists at `${CLAUDE_PLUGIN_ROOT}/root/`, laid out ex
 
 - `bin/workflow-index`
 - `project/workflow/README.md`
+- `project/workflow/.version` (written, not copied — see step 2)
 
 **Create only if absent** — the user owns these the moment they exist, and they accumulate real content:
 
@@ -35,6 +36,8 @@ Look for `project/workflow/` first. If it exists, this is a re-run or an upgrade
 ### 2. Copy
 
 Copy from `${CLAUDE_PLUGIN_ROOT}/root/` into the repository root, preserving the tree, then from `${CLAUDE_PLUGIN_ROOT}/seeds/` **skipping any file that already exists**. Set the executable bit on `bin/workflow-index` — packagers strip it, and the command every skill names then fails with "permission denied".
+
+Then write `project/workflow/.version`, overwriting it: a single line holding the `version` from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` (e.g. `0.2.1`). It records which package version this tree runs, so the migrations in the package's `CHANGELOG.md` not yet applied here can be found by comparing versions. It belongs to the overwrite group and is committed.
 
 ### 3. Confirm the ignore rules landed
 
