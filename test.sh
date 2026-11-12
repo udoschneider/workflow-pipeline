@@ -403,6 +403,128 @@ rm -rf "$W"
 [ "$failures" -eq "$before" ] && pass "sweep reports every corpus, and a broken one as broken"
 
 before=$failures
+# `links`: every citation into the pipeline or the memory files resolves, and
+# --fix makes only the mechanical repairs. Built as a real git repo because the
+# (pruned) repair is decided by history, and a shallow clone must refuse it.
+L="$(mktemp -d)"
+W="$L/project/workflow"
+mkdir -p "$W"/{thoughts,backlog,active,completed,rejected} "$L/project/reference" "$L/src"
+cp "$PKG/root/bin/workflow-index" "$L/wi"
+lg() { git -C "$L" -c user.name=t -c user.email=t@t "$@"; }
+links() { (cd "$L" && python3 ./wi links "$@"); }
+git -C "$L" init -q
+printf -- '---\ntype: code\npriority: Must Have\n---\n# Gone\n' > "$W/completed/20260201_gone.md"
+lg add -A && lg commit -qm seed
+rm "$W/completed/20260201_gone.md"
+printf -- '---\ntype: code\npriority: Must Have\n---\n# Foo\n' > "$W/completed/20261112_foo.md"
+printf '# Lessons\n## Gates\n### Caching and gate scheduling\n### Dup\n### Dup\n```\n# not a heading\n```\n' \
+  > "$L/project/lessons.md"
+printf '# Ref\n## Synthesized later\n' > "$L/project/reference/topic.md"
+printf '# Scrap\n' > "$L/project/scrap.md"
+printf -- '---\ntype: code\nsummary: |\n  s\n---\n# T\nsee active/20260101_foo.md\n' > "$W/thoughts/20260105_t.md"
+printf 'see active/20260101_missing.md\n' > "$W/rejected/20260106_closed.md"
+cp "$PKG/root/project/workflow/README.md" "$W/README.md"
+cat > "$L/src/code.c" <<'EOF'
+/* why: `completed/20260201_gone.md` and backlog/20260101_foo */
+/* kept: `completed/20260115_old.md` (pruned) */
+/* exact: `project/lessons.md` § "Caching and gate scheduling" */
+/* prefix: lessons.md § "Caching" and § curly: lessons.md § “Gates” */
+EOF
+lg add -A && lg commit -qm tree
+
+out="$(links 2>&1)"; code=$?
+[ "$code" -eq 1 ] || fail "links exited $code on a clean-except-for-fixable tree, expected 1"
+echo "$out" | grep -q 'src/code.c:1: dangling completed/20260201_gone.md' \
+  || fail "links did not report a citation to a pruned doc"
+echo "$out" | grep -q 'src/code.c:1: moved backlog/20260101_foo' \
+  || fail "links did not report a citation to a moved doc as moved"
+echo "$out" | grep -q 'thoughts/20260105_t.md:7: moved' \
+  || fail "links skipped a live pipeline file"
+echo "$out" | grep -q 'rejected/' && fail "links scanned a closed record in rejected/"
+echo "$out" | grep -q 'README.md' && fail "links scanned the installed spec"
+echo "$out" | grep -q 'code.c:[234]:' && fail "links flagged a (pruned), exact, prefix, or curly-quoted citation"
+
+out="$(links --fix 2>&1)"; code=$?
+[ "$code" -eq 0 ] || fail "links --fix left findings on a fully fixable tree (exit $code): $out"
+echo "$out" | grep -q 'marked completed/20260201_gone.md (pruned)' || fail "--fix did not print its prune"
+echo "$out" | grep -q 'repointed backlog/20260101_foo → completed/20261112_foo' \
+  || fail "--fix did not print its repoint, or lost the citation's shape"
+grep -q '`completed/20260201_gone.md` (pruned)' "$L/src/code.c" \
+  || fail "--fix did not put the (pruned) marker outside the backticks"
+grep -q 'see completed/20261112_foo.md' "$W/thoughts/20260105_t.md" \
+  || fail "--fix did not repoint the citation in a live pipeline file"
+grep -q 'active/20260101_missing.md' "$W/rejected/20260106_closed.md" \
+  || fail "--fix rewrote a closed record"
+
+# Findings --fix must leave to a human: a slug that never existed, a heading
+# that is gone, an unquoted section, an ambiguous heading, a missing file, and a
+# prefix that cuts a word.
+cat > "$L/src/broken.c" <<'EOF'
+/* backlog/20260101_never_was */
+/* lessons.md § "Gone heading" */
+/* lessons.md § Gates */
+/* lessons.md § "Dup" */
+/* reference/absent.md § "Anything" */
+/* lessons.md § "Cach" */
+/* lessons.md § "not a heading" */
+EOF
+lg add -A && lg commit -qm broken
+out="$(links --fix 2>&1)"; code=$?
+[ "$code" -eq 1 ] || fail "links --fix exited $code with unfixable findings, expected 1"
+for expect in '1: dangling' '2: missing-heading' '3: unquoted' '4: ambiguous-heading' \
+              '5: missing-file' '6: missing-heading' '7: missing-heading'; do
+  echo "$out" | grep -q "broken.c:$expect" || fail "links did not report broken.c:$expect"
+done
+grep -q 'never_was \*/' "$L/src/broken.c" || fail "--fix marked a never-existing slug (pruned)"
+lg rm -q src/broken.c && lg commit -qm unbreak
+
+# A lesson synthesized into a reference under the same heading: repointed.
+printf '/* project/lessons.md § "Synthesized later" */\n' > "$L/src/moved.c"
+lg add -A && lg commit -qm moved
+out="$(links --fix 2>&1)"
+grep -q 'project/reference/topic.md § "Synthesized later"' "$L/src/moved.c" \
+  || fail "--fix did not repoint a heading that moved to exactly one other memory file"
+
+# links.json narrows the scan, and refuses a typo'd key rather than ignoring it.
+printf 'see backlog/20260101_never_was\n' > "$L/src/vendored.txt"
+lg add -A && lg commit -qm vendored
+printf '{"exclude": ["src/vendored.txt"]}\n' > "$W/links.json"
+links >/dev/null 2>&1 || fail "links.json exclude did not drop the excluded file"
+printf '{"extensions": [".c"]}\n' > "$W/links.json"
+links >/dev/null 2>&1 || fail "links.json extensions did not restrict the scan"
+printf '{"excludes": []}\n' > "$W/links.json"
+links >/dev/null 2>&1; code=$?
+[ "$code" -eq 2 ] || fail "links accepted an unknown links.json key (exit $code, expected 2)"
+printf '{"exclude": ["src/vendored.txt"]}\n' > "$W/links.json"
+lg add -A && lg commit -qm config
+
+# Separate from --check: a dangling citation must not fail validation.
+printf 'see backlog/20260101_never_was\n' > "$L/src/later.txt"
+lg add -A && lg commit -qm later
+(cd "$L" && python3 ./wi --check >/dev/null 2>&1) \
+  || fail "--check failed on a dangling citation; links must stay a separate command"
+grep -rqs 'links' "$PKG/hooks" && fail "an installed hook invokes links"
+
+# Shallow clone: same verdict without history; --fix refuses rather than guessing.
+printf 'see `completed/20260201_gone.md`\n' > "$L/src/later.txt"
+lg add -A && lg commit -qm again
+links >/dev/null 2>&1; full=$?
+C="$(mktemp -d)"
+git clone -q --depth 1 "file://$L" "$C/s"
+(cd "$C/s" && python3 ./wi links >/dev/null 2>&1); shallow=$?
+[ "$full" -eq "$shallow" ] || fail "links gave $shallow in a shallow clone but $full in a full one"
+(cd "$C/s" && python3 ./wi links --fix >/dev/null 2>&1); code=$?
+[ "$code" -eq 2 ] || fail "links --fix exited $code in a shallow clone needing history, expected 2"
+rm -rf "$C"
+
+# Could not run is 2, never a clean 0 or a findings 1.
+N="$(mktemp -d)"; mkdir -p "$N/project/workflow"
+(cd "$N" && python3 "$L/wi" links >/dev/null 2>&1); code=$?
+[ "$code" -eq 2 ] || fail "links exited $code outside a git repository, expected 2"
+rm -rf "$N" "$L"
+[ "$failures" -eq "$before" ] && pass "links reports and repairs dangling citations, and fails loudly when it cannot run"
+
+before=$failures
 # The README states the indexes and the local config are gitignored. Assert it
 # by asking git, in a real repository, rather than by checking a file exists --
 # a .gitignore with the wrong relative paths exists and ignores nothing, and

@@ -90,7 +90,28 @@ The `band`/`gates` axes are detailed in the [Bands and gates](#bands-and-gates--
   2. **Extract "why" to code** — verify key design rationale is in module/function doc comments or inline comments (see your project's documentation rules)
   3. **Extract lessons and reference** — gotchas, mistakes, and debugging stories go to `project/lessons.md`; domain knowledge too detailed for code comments goes to `project/reference/`
   4. **Promote specific lessons into code** — check `project/lessons.md` for entries specific to the completed item. If a lesson is tightly coupled to a particular module or function, move it into that code as a comment or doc-comment note (keeping `lessons.md` for cross-cutting patterns).
-  5. **Then delete** — the full history remains recoverable via `git log -- project/workflow/completed/`
+  5. **Then delete, and resolve the inbound citations in the same commit** — run `bin/workflow-index links --fix` after the delete; it marks each citation of the doc `(pruned)`. Where a citation was the only home of a reason, inline the reason instead (see [Citing pipeline files and memory entries](#citing-pipeline-files-and-memory-entries)). The full history remains recoverable via `git log -- project/workflow/completed/`
+
+### Citing pipeline files and memory entries
+
+Pipeline files move between stages and get pruned by design, and `/prune-lessons` triages memory entries away. Every citation pointing at one dangles the moment that happens — in code comments, test docs, config files and reference docs alike. So:
+
+- **Prefer inlining the reason.** A rationale worth keeping goes into the citing text or a reference doc; provenance ("which item added this", "acceptance criterion 3") is git's job. A citation is for *where to read more*, never the only copy of *why*.
+- **A citation to a pipeline file is a bare path** — `completed/20260101_slug.md` (with or without `.md` and the `project/workflow/` prefix). It must **resolve at that path, or carry the `(pruned)` marker**: `` `completed/20260101_slug.md` (pruned) ``. The marker keeps the provenance breadcrumb — the slug still names the date and the topic — without implying there is a file to open. Pipeline *directories* are always fine to name.
+- **A citation into a memory file names a heading, quoted:** `` `project/lessons.md` § "Exact heading text" `` — likewise for `project/scrap.md` and `project/reference/<topic>.md`. Any heading level counts. The quoted text may be the heading's leading words if no other heading in that file starts with them (cut at a word boundary; a trailing `…` is allowed). An unquoted `§` cannot be checked and is not allowed.
+- **A memory citation is never marked `(pruned)`.** A lesson is not a decision record, so a dead one preserves nothing worth following. When its heading is gone, inline the point or delete the citation.
+
+**`bin/workflow-index links` enforces this** over every tracked text file: exit 0 when every citation resolves, 1 with one line per finding, 2 when it could not run. `--fix` makes exactly three repairs and prints each — repoint a pipeline citation whose slug now lives at exactly one other stage path (including the date change into `completed/`), mark `(pruned)` when git history shows the doc existed, and repoint a memory citation whose heading now lives in exactly one other memory file — and reports everything else for a human. It needs full history to mark `(pruned)`, and refuses with exit 2 in a shallow clone rather than guess.
+
+It is deliberately **not** part of `--check` or any hook: nothing fails until a project wires `bin/workflow-index links` into its own gate (and names that line in `README.local.md`). Which files it scans is set in the committed `project/workflow/links.json` — both keys optional, unknown keys refused:
+
+```json
+{ "exclude": ["vendor/", "deps/", "*.min.js"], "extensions": [".md", ".ex", ".c"] }
+```
+
+`exclude` takes path prefixes ending in `/` or globs; `extensions`, if present, restricts the scan to those suffixes. Without the file, every tracked text file is scanned. Never scanned: `completed/` and `rejected/` (closed records), this `README.md`, and the generator itself.
+
+**Repairing a citation is not rewriting history.** Repointing a moved slug or adding `(pruned)` changes where a pointer leads, not what a section said, so `--fix` may do it inside live `thoughts/`, `backlog/` and `active/` files. Closed records in `completed/` and `rejected/` are never touched.
 
 ### Close-out preparation: spawn out before moving to `completed/`
 
@@ -128,7 +149,7 @@ A Socratic workflow for refining rough ideas into actionable items.
 
 **Rules:**
 
-- Never overwrite history in thought/backlog files — always append new dated sections
+- Never overwrite history in thought/backlog files — always append new dated sections. (Repairing a citation is the one exception — see [Citing pipeline files and memory entries](#citing-pipeline-files-and-memory-entries).)
 - All items (code and non-code) follow the same pipeline — use `type: code` or `type: initiative` in the frontmatter to distinguish
 - **One question at a time** — ask a single question per message and wait for the answer before asking the next.
 
@@ -773,3 +794,4 @@ Items can be rejected from any stage (`thoughts/`, `backlog/`, or `active/`) whe
 3. **Filename date rules:**
    - For all moves **except** to `completed/`: the filename (`YYYYMMDD_slug.md`) keeps the **origin date**
    - When moving to `completed/`: rename the date slug to the **completion date** (e.g., `20260320_feature.md` → `20260322_feature.md` if completed on 2026-03-22). The document content retains all original dates in the history table.
+4. **Repoint the citations the move broke** — run `bin/workflow-index links --fix` and commit its repairs with the move. A citation to the old path dangles from the moment the file leaves it, not only once it is pruned.

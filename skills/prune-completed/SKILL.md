@@ -5,7 +5,7 @@ description: "Audit completed workflow docs for pruning readiness — checks tes
 
 # Prune Completed Skill
 
-Audit `project/workflow/completed/` docs against the 5-step pruning checklist and report readiness.
+Audit `project/workflow/completed/` docs against the pruning checklist and report readiness.
 
 ## Invocation
 
@@ -16,7 +16,7 @@ Audit `project/workflow/completed/` docs against the 5-step pruning checklist an
 
 ## Pruning Checklist (per file)
 
-Each completed doc is evaluated against these 5 steps from the workflow rules:
+Each completed doc is evaluated against these steps from the workflow rules:
 
 ### 1. Tests exist
 
@@ -66,9 +66,21 @@ If this doc's frontmatter has a `cluster: <slug>` field, the doc is a *member* o
 
 To locate the cluster doc, glob `project/workflow/{active,completed}/*_<slug>.md`. The match is the file whose slug (filename minus date prefix and `.md` extension) equals the `cluster:` value.
 
-### 7. Ready to delete
+### 7. Inbound references
 
-Only passes if steps 1-6 all pass (or step 5 is "no metric available, pre-rollout closure").
+Find what still points at the doc: `bin/workflow-index links` lists every dangling citation, and before the delete you can grep the doc's slug (filename minus date prefix and `.md`) outside `project/workflow/` to see what *will* dangle. For each citation, decide which of two it is:
+
+- **It carries a reason** the citing text doesn't state ("see `completed/…` for why") → inline the reason into the citing code comment or doc, or into a reference doc, *before* the delete. A `(pruned)` marker keeps the provenance; it does not keep the why.
+- **It is provenance or a pointer** ("added by `completed/…`", "acceptance criterion 3 of …") → leave it. `--fix` marks it `(pruned)` after the delete.
+
+- **Pass:** No citations, or every reason-carrying citation has been inlined
+- **Flag:** List each citation whose reason exists only in this doc
+
+Citations inside other *live* pipeline files are repaired the same way; closed records in `completed/` and `rejected/` are never touched. See `project/workflow/README.md` § "Citing pipeline files and memory entries".
+
+### 8. Ready to delete
+
+Only passes if steps 1-7 all pass (or step 5 is "no metric available, pre-rollout closure").
 
 ## Workflow
 
@@ -81,6 +93,7 @@ Only passes if steps 1-6 all pass (or step 5 is "no metric available, pre-rollou
    - Step 4: Check if lessons.md entries should be promoted to code
    - Step 5: Check `project/instrumentation/agent_intervention.csv` for a matching slug row; backfill from the doc's Implementation notes section if missing
    - Step 6: Check the doc's frontmatter for a `cluster:` field; if present, locate the cluster doc in `active/` or `completed/`
+   - Step 7: Grep the doc's slug outside `project/workflow/`, and read each hit to sort reason-carrying citations from provenance
 4. **Report results** per file in this format:
 
 ```
@@ -94,11 +107,12 @@ Only passes if steps 1-6 all pass (or step 5 is "no metric available, pre-rollou
 | 4. Lessons promoted | Pass/Flag | items needing promotion |
 | 5. Intervention metric | Pass/Backfill/Pre-rollout | CSV row found, or backfilled, or no data available |
 | 6. Cluster gate | Pass/Fail | no cluster, cluster closed, cluster still active, or cluster missing |
-| **7. Ready to prune** | **Yes/No** | blocking issues summary |
+| 7. Inbound references | Pass/Flag | citations whose reason exists only in this doc |
+| **8. Ready to prune** | **Yes/No** | blocking issues summary |
 ```
 
 5. **After reporting**, ask the user which files to prune (if any are ready)
-6. **On confirmation**, delete the approved files from `completed/`
+6. **On confirmation**, delete the approved files from `completed/`, then run `bin/workflow-index links --fix` and commit its repairs **in the same commit as the delete** — it marks every citation of a deleted doc `(pruned)` and prints each one. If it reports anything it could not repair, resolve that before committing; a prune that leaves dangling citations is the failure this step exists for.
 
 ## Batch Mode
 

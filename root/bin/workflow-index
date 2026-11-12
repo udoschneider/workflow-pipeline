@@ -28,6 +28,16 @@ Usage:
     bin/workflow-index vault            resolve and print the sparring vault root
     bin/workflow-index sweep TOKEN...   search every prior-art corpus for TOKENs
     bin/workflow-index sweep --full ... same, without eliding long index rows
+    bin/workflow-index links            fail on any dangling citation
+    bin/workflow-index links --fix      apply the mechanical repairs, report the rest
+
+`links` checks every citation into the pipeline and the memory files in the
+tracked tree: a bare stage path (`completed/20260101_foo.md`) must resolve or
+carry `(pruned)`, and a `` `project/lessons.md` § "Heading" `` citation must
+name a heading that exists exactly once. It is a separate command, never part
+of `--check`, so nothing starts failing until a project wires it into its gate.
+Exit codes: 0 clean, 1 findings, 2 could not run. Per-project file selection
+lives in the committed `project/workflow/links.json`.
 
 `sweep` is the prior-art check a spar runs *before* its first round. It reports
 each corpus separately under the question only that corpus answers, because the
@@ -802,6 +812,455 @@ def sweep(root, tokens, full):
     return "\n".join(out) + "\n", vault_error
 
 
+# --- Citation check (`links`) -------------------------------------------
+
+# Pipeline files move between stages and get pruned by design, and memory
+# entries get triaged away by /prune-lessons. Every one of those operations
+# leaves the citations pointing at it dangling, in code comments as often as in
+# docs -- a prune of 16 completed docs once left ~60 behind. This check makes a
+# dangling citation a gate failure instead of something the next reader trips
+# over.
+#
+# Two citation forms, because those are the forms people actually write:
+#
+#   * a bare stage path -- `completed/20260101_foo.md`, with or without `.md`
+#     and the `project/workflow/` prefix. It must resolve at exactly that path
+#     or carry the `(pruned)` marker. A markdown-link-only checker misses these
+#     entirely: in one consumer all 87 dead references were bare paths.
+#   * a memory section -- `` `project/lessons.md` § "Heading" ``. The heading
+#     must exist, at any level, exactly once. A `#fragment` link is the rare
+#     form; the prose `§` form outnumbered it ~90 to 1, which is why the quoted
+#     form is the one checked, and an unquoted `§` is itself a finding.
+
+LINK_STAGES = ("thoughts", "backlog", "active", "completed", "rejected")
+# Closed records are history: their citations were true when written, and the
+# pipeline never rewrites a closed record. Live files get repaired; a repair
+# changes where a pointer leads, not what the section said.
+LINK_CLOSED = ("completed", "rejected")
+LINK_CONFIG_KEYS = ("exclude", "extensions")
+# The canonical marker, plus two older prose forms that say the same thing, so
+# --fix never stacks a second marker onto a sentence that already has one.
+PRUNED_RE = re.compile(r"\A`?(?:\s*\(pruned\b|,\s*pruned\b)")
+HEADING_RE = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# What may follow a memory path: an optional closing backtick, then `§`, then
+# the heading in straight or curly quotes. Group 1/2 absent means unquoted.
+SECTION_RE = re.compile(r'\A`?\s*§\s*(?:"([^"\n]*)"|“([^”\n]*)”)?')
+
+
+def heading_matches(headings, cited):
+    """The headings a `§ "…"` citation names: exact, else a unique prefix.
+
+    People cite a long heading by its first words (`§ "Caching"` for
+    `## Caching and gate scheduling`) -- in one consumer 66 of 109 non-exact
+    citations were exactly that, and unambiguous. A prefix counts only at a
+    word boundary, so `§ "Cach"` does not, and a trailing `…` / `...` marks a
+    deliberate truncation rather than part of the text. An exact match wins
+    outright, so a heading that is a prefix of a longer sibling stays citable.
+    """
+    exact = [h for h in headings if h == cited]
+    if exact:
+        return exact
+    stem = re.sub(r"\s*(…|\.\.\.)\s*$", "", cited)
+    if not stem:
+        return []
+    return [
+        h for h in headings
+        if h.startswith(stem)
+        and (len(h) == len(stem) or not (h[len(stem)].isalnum() or h[len(stem)] == "_"))
+    ]
+
+
+class LinksError(Exception):
+    """The check could not run. Distinct from findings: exit 2, never 1."""
+
+
+def _git(repo, *args):
+    import subprocess
+
+    try:
+        done = subprocess.run(
+            ("git",) + args, cwd=repo, capture_output=True, text=True
+        )
+    except OSError as error:
+        raise LinksError("git is not available: {}".format(error))
+    if done.returncode != 0:
+        raise LinksError(
+            "git {} failed: {}".format(" ".join(args), done.stderr.strip())
+        )
+    return done.stdout
+
+
+def links_config(root):
+    path = os.path.join(root, "workflow", "links.json")
+    if not os.path.exists(path):
+        return {"exclude": [], "extensions": None}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise LinksError("{} is unreadable: {}".format(path, error))
+    if not isinstance(data, dict):
+        raise LinksError("{} must hold a JSON object".format(path))
+    # A typo'd key ("excludes") silently scanning everything is the quiet
+    # failure; refusing it is the loud one.
+    unknown = sorted(set(data) - set(LINK_CONFIG_KEYS))
+    if unknown:
+        raise LinksError(
+            "{}: unknown key(s) {}; allowed: {}".format(
+                path, ", ".join(unknown), ", ".join(LINK_CONFIG_KEYS)
+            )
+        )
+    for key in LINK_CONFIG_KEYS:
+        value = data.get(key)
+        if value is not None and not (
+            isinstance(value, list) and all(isinstance(v, str) for v in value)
+        ):
+            raise LinksError("{}: `{}` must be a list of strings".format(path, key))
+    return {"exclude": data.get("exclude") or [], "extensions": data.get("extensions")}
+
+
+def _excluded(path, patterns):
+    import fnmatch
+
+    for pattern in patterns:
+        if pattern.endswith("/") and path.startswith(pattern):
+            return True
+        if fnmatch.fnmatch(path, pattern):
+            return True
+    return False
+
+
+class Links:
+    """One scan of a repository's citations, plus the repairs --fix may make."""
+
+    def __init__(self, root):
+        self.root = root
+        self.repo = os.path.dirname(os.path.abspath(root))
+        # Repo-relative spelling of the project dir, so `--root docs` checks
+        # `docs/workflow/...` citations rather than a hardcoded `project/`.
+        self.project = os.path.relpath(os.path.abspath(root), self.repo).replace(
+            os.sep, "/"
+        )
+        self.workflow = self.project + "/workflow"
+        self.config = links_config(root)
+        p = re.escape(self.project + "/")
+        w = re.escape(self.workflow + "/")
+        boundary = r"(?<![\w/.\-])(?<!\]\()"
+        self.stage_re = re.compile(
+            boundary
+            + r"((?:{})?({})/(\d{{8}}_[a-z0-9_]+)(\.md)?)".format(
+                w, "|".join(LINK_STAGES)
+            )
+        )
+        self.memory_re = re.compile(
+            boundary
+            + r"((?:{})?(lessons\.md|scrap\.md|reference/[A-Za-z0-9_./-]+?\.md))".format(p)
+        )
+        self.stage_index = self._stage_index()
+        self._headings = {}
+
+    # -- what exists ----------------------------------------------------
+
+    def _stage_index(self):
+        """Map each date-less slug to every stage path carrying it.
+
+        Built from the tree, not git, so the generated `_MAP.md`/`_DEPS.md`
+        (gitignored) and a clean checkout give the same verdict.
+        """
+        index = {}
+        for stage in LINK_STAGES:
+            directory = os.path.join(self.root, "workflow", stage)
+            for name in sorted(list_md(directory)):
+                if DATE_PREFIX_RE.match(name):
+                    index.setdefault(slug_of(name), []).append(
+                        "{}/{}/{}".format(self.workflow, stage, name)
+                    )
+        return index
+
+    def memory_files(self):
+        files = []
+        for name in ("lessons.md", "scrap.md"):
+            if os.path.isfile(os.path.join(self.root, name)):
+                files.append("{}/{}".format(self.project, name))
+        ref = os.path.join(self.root, "reference")
+        for path in iter_markdown([ref]):
+            files.append(os.path.relpath(path, self.repo).replace(os.sep, "/"))
+        return files
+
+    def headings(self, rel):
+        """Heading texts of a markdown file, any level, code fences skipped."""
+        if rel not in self._headings:
+            found = []
+            path = os.path.join(self.repo, rel)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    fenced = False
+                    for line in handle:
+                        if FENCE_RE.match(line):
+                            fenced = not fenced
+                            continue
+                        if fenced:
+                            continue
+                        match = HEADING_RE.match(line.rstrip("\n"))
+                        if match:
+                            found.append(match.group(1))
+            except OSError:
+                found = None
+            self._headings[rel] = found
+        return self._headings[rel]
+
+    # -- what gets scanned ----------------------------------------------
+
+    def sources(self):
+        listed = _git(self.repo, "ls-files", "-z")
+        skip_dirs = tuple("{}/{}/".format(self.workflow, s) for s in LINK_CLOSED)
+        # Installed from the package and replaced on every update, so a finding
+        # in it is unfixable here; its example citations name docs that exist
+        # only in the package's illustrations.
+        spec = self.workflow + "/README.md"
+        # This script is installed and tracked too, and its documentation
+        # cites example docs; scanning it would flag -- and --fix rewrite --
+        # those examples in every consumer.
+        me = os.path.realpath(__file__)
+        extensions = self.config["extensions"]
+        for rel in sorted(filter(None, listed.split("\0"))):
+            if rel.startswith(skip_dirs) or rel == spec:
+                continue
+            if os.path.realpath(os.path.join(self.repo, rel)) == me:
+                continue
+            if _excluded(rel, self.config["exclude"]):
+                continue
+            if extensions is not None and os.path.splitext(rel)[1] not in extensions:
+                continue
+            path = os.path.join(self.repo, rel)
+            try:
+                with open(path, "rb") as handle:
+                    data = handle.read()
+            except OSError:
+                continue
+            if b"\0" in data:
+                continue
+            yield rel, data.decode("utf-8", errors="replace")
+
+    # -- the check ------------------------------------------------------
+
+    def check(self):
+        findings = []
+        files = citations = 0
+        for rel, body in self.sources():
+            files += 1
+            for number, line in enumerate(body.split("\n"), 1):
+                for match in self.stage_re.finditer(line):
+                    citations += 1
+                    finding = self._check_stage(rel, number, line, match)
+                    if finding:
+                        findings.append(finding)
+                for match in self.memory_re.finditer(line):
+                    rest = line[match.end():]
+                    section = SECTION_RE.match(rest)
+                    if not section or "§" not in section.group(0):
+                        continue
+                    citations += 1
+                    finding = self._check_memory(rel, number, match, section)
+                    if finding:
+                        findings.append(finding)
+        return findings, files, citations
+
+    def _check_stage(self, rel, number, line, match):
+        citation, stage, name = match.group(1), match.group(2), match.group(3)
+        if PRUNED_RE.match(line[match.end():]):
+            return None
+        path = "{}/{}/{}.md".format(self.workflow, stage, name)
+        if os.path.isfile(os.path.join(self.repo, path)):
+            return None
+        candidates = self.stage_index.get(slug_of(name), [])
+        if len(candidates) == 1:
+            kind, detail = "moved", candidates[0]
+        elif candidates:
+            kind, detail = "ambiguous", ", ".join(candidates)
+        else:
+            kind, detail = "dangling", path
+        return {
+            "kind": kind, "file": rel, "line": number,
+            "citation": citation, "slug": slug_of(name), "detail": detail,
+        }
+
+    def _canonical_memory(self, citation):
+        if citation.startswith(self.project + "/"):
+            return citation
+        return "{}/{}".format(self.project, citation)
+
+    def _check_memory(self, rel, number, match, section):
+        citation = match.group(1)
+        heading = section.group(1) if section.group(1) is not None else section.group(2)
+        base = {"file": rel, "line": number, "citation": citation, "heading": heading}
+        if heading is None:
+            return dict(base, kind="unquoted", detail='use § "Exact heading text"')
+        target = self._canonical_memory(citation)
+        found = self.headings(target)
+        if found is None:
+            return dict(base, kind="missing-file", detail=target)
+        count = len(heading_matches(found, heading))
+        if count == 1:
+            return None
+        if count > 1:
+            return dict(base, kind="ambiguous-heading",
+                        detail='"{}" matches {} headings in {}'.format(heading, count, target))
+        elsewhere = [f for f in self.memory_files() if f != target
+                     and len(heading_matches(self.headings(f) or [], heading)) == 1]
+        detail = '"{}" not in {}'.format(heading, target)
+        if len(elsewhere) == 1:
+            return dict(base, kind="moved-heading", detail=detail, target=elsewhere[0])
+        return dict(base, kind="missing-heading", detail=detail)
+
+    # -- repairs --------------------------------------------------------
+
+    def deleted_slugs(self):
+        """Slugs git history shows were deleted from some stage path.
+
+        The evidence --fix needs before it may write `(pruned)`: a slug with no
+        such history is a typo or a conceptual reference, and marking it pruned
+        would record a falsehood. Matched by slug, because a citation usually
+        names the stage the doc was in when cited, not the `completed/` path
+        (with its new date) that was finally deleted.
+        """
+        if _git(self.repo, "rev-parse", "--is-shallow-repository").strip() == "true":
+            raise LinksError(
+                "--fix needs full history to tell a pruned doc from a typo, and"
+                " this clone is shallow.\n  Fix: git fetch --unshallow, then"
+                " re-run."
+            )
+        out = _git(self.repo, "log", "--no-renames", "--diff-filter=D",
+                   "--name-only", "--format=", "--", self.workflow)
+        slugs = set()
+        for path in out.splitlines():
+            name = os.path.basename(path)
+            if DATE_PREFIX_RE.match(name):
+                slugs.add(slug_of(name))
+        return slugs
+
+    def _reshape(self, citation, target):
+        if not citation.endswith(".md"):
+            target = target[:-3]
+        prefix = self.workflow + "/"
+        if not citation.startswith(prefix):
+            target = target[len(prefix):]
+        return target
+
+    def _reshape_memory(self, citation, target):
+        prefix = self.project + "/"
+        return target if citation.startswith(prefix) else target[len(prefix):]
+
+    def repairs(self, findings):
+        """Pick the mechanical repairs. Everything else is left for a human."""
+        needs_history = any(f["kind"] == "dangling" for f in findings)
+        deleted = self.deleted_slugs() if needs_history else set()
+        chosen = []
+        for f in findings:
+            if f["kind"] == "moved":
+                chosen.append((f, "repoint", self._reshape(f["citation"], f["detail"])))
+            elif f["kind"] == "dangling" and f["slug"] in deleted:
+                chosen.append((f, "prune", None))
+            elif f["kind"] == "moved-heading":
+                chosen.append(
+                    (f, "repoint", self._reshape_memory(f["citation"], f["target"]))
+                )
+        return chosen
+
+    def apply(self, chosen):
+        """Rewrite each file once, touching only the reported occurrences."""
+        boundary = r"(?<![\w/.\-])(?<!\]\()"
+        by_file = {}
+        for item in chosen:
+            by_file.setdefault(item[0]["file"], []).append(item)
+        applied = []
+        for rel, items in sorted(by_file.items()):
+            path = os.path.join(self.repo, rel)
+            with open(path, encoding="utf-8", newline="") as handle:
+                lines = handle.read().split("\n")
+            done = set()
+            for f, action, new in items:
+                key = (f["line"], f["citation"], f.get("heading"))
+                if key in done:
+                    continue
+                done.add(key)
+                index = f["line"] - 1
+                line = lines[index]
+                if "heading" in f:
+                    pattern = re.compile(
+                        boundary + re.escape(f["citation"])
+                        + r'(?=`?\s*§\s*["“]' + re.escape(f["heading"]) + r'["”])'
+                    )
+                else:
+                    pattern = re.compile(
+                        boundary + re.escape(f["citation"]) + r"(?![\w]|\.md)"
+                    )
+                for m in reversed(list(pattern.finditer(line))):
+                    rest = line[m.end():]
+                    if action == "repoint":
+                        line = line[: m.start()] + new + rest
+                    elif not PRUNED_RE.match(rest):
+                        # A backticked citation takes the marker outside the
+                        # closing backtick: `completed/x.md` (pruned).
+                        if rest.startswith("`"):
+                            line = line[: m.start()] + f["citation"] + "` (pruned)" + rest[1:]
+                        else:
+                            line = line[: m.start()] + f["citation"] + " (pruned)" + rest
+                lines[index] = line
+                applied.append((f, action, new))
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.write("\n".join(lines))
+        return applied
+
+
+LINKS_HINTS = {
+    "moved": "lives elsewhere now (--fix repoints)",
+    "ambiguous": "slug exists at several paths; pick one",
+    "dangling": "resolves nowhere (--fix marks (pruned) if git shows it existed)",
+    "unquoted": "memory citation must quote the heading",
+    "missing-file": "memory file does not exist",
+    "missing-heading": "heading gone; inline the point or delete the citation",
+    "moved-heading": "heading lives in another memory file (--fix repoints)",
+    "ambiguous-heading": "make the heading unique in its file",
+}
+
+
+def format_finding(f):
+    target = f["detail"] if f["kind"] != "moved-heading" else "{} → {}".format(
+        f["detail"], f["target"])
+    return "{}:{}: {} {} — {} ({})\n".format(
+        f["file"], f["line"], f["kind"], f["citation"], target, LINKS_HINTS[f["kind"]])
+
+
+def run_links(root, fix):
+    try:
+        links = Links(root)
+        findings, files, citations = links.check()
+        if fix and findings:
+            for f, action, new in links.apply(links.repairs(findings)):
+                if action == "repoint":
+                    sys.stdout.write("{}:{}: repointed {} → {}\n".format(
+                        f["file"], f["line"], f["citation"], new))
+                else:
+                    sys.stdout.write("{}:{}: marked {} (pruned)\n".format(
+                        f["file"], f["line"], f["citation"]))
+            links = Links(root)
+            findings, files, citations = links.check()
+    except LinksError as error:
+        sys.stderr.write("links: could not run — {}\n".format(error))
+        return 2
+    if findings:
+        for f in findings:
+            sys.stdout.write(format_finding(f))
+        sys.stdout.write("links: {} finding(s) in {} citation(s) across {} file(s)\n".format(
+            len(findings), citations, files))
+        return 1
+    sys.stdout.write("links: {} citation(s) across {} file(s) resolve ✓\n".format(
+        citations, files))
+    return 0
+
+
 # --- Entry point --------------------------------------------------------
 
 
@@ -812,6 +1271,7 @@ def main(argv):
     command = None
     tokens = []
     full = False
+    fix = False
 
     while args:
         arg = args.pop(0)
@@ -826,6 +1286,10 @@ def main(argv):
             command = "vault"
         elif arg == "sweep":
             command = "sweep"
+        elif arg == "links":
+            command = "links"
+        elif arg == "--fix" and command == "links":
+            fix = True
         elif arg == "--full":
             full = True
         elif arg in ("-h", "--help"):
@@ -851,6 +1315,12 @@ def main(argv):
         # every corpus that *was* searched, but a caller must be able to tell
         # a clean sweep from a partial one without parsing prose.
         return 1 if vault_error else 0
+
+    if command == "links":
+        if check:
+            sys.stderr.write("links does not combine with --check\n")
+            return 2
+        return run_links(root, fix)
 
     if command == "vault":
         vault_root, error = resolve_vault(root)

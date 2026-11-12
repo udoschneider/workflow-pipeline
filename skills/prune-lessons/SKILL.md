@@ -77,6 +77,7 @@ Both are interactive proposals — user confirms each one before the rewrite hap
 
    d. **Execute immediately** on confirmation — don't accumulate a change set:
    - Write/update the target file (reference, code comment, etc.)
+   - **Resolve the citations to the lesson in the same change:** after the edit, run `bin/workflow-index links` and handle every finding that names the lesson's heading. If the lesson moved under the same heading, `--fix` repoints the citation. If it was synthesized under a new heading, repoint it by hand. If it was dropped, inline the point into the citing text or delete the citation. A memory citation is never marked `(pruned)` — see `project/workflow/README.md` § "Citing pipeline files and memory entries".
    - Remove the source lines from `lessons.md`
    - Update `project/reference/_INDEX.md` (add new entry, or refresh description if the reference grew)
    - For new references: add a one-line pointer to the relevant section of the agent instructions file (ask the user which section if it's not obvious)
